@@ -2,6 +2,7 @@
 
 #include "dsp/FxChain.h"
 #include "Looper.h"
+#include "PitchTap.h"
 
 #include <array>
 #include <vector>
@@ -60,12 +61,20 @@ public:
 
     bool isMuted() const noexcept { return muted; }
 
+    // The Practice view's pitch of the singer (the mic after the input gain, before any
+    // effect), as the desktop's processor runs it. `timeline` is where the next block's
+    // first sample sits on the sing-along timeline, in samples.
+    PitchTap& getPitchTap() noexcept { return pitchTap; }
+    void setTimelinePosition (juce::int64 position) noexcept { timeline = position; }
+
 private:
     fx::FxChain chain { fx::FxChain::getAllTypes() };
     juce::dsp::Gain<float> inputGain, outputGain;
     juce::dsp::Limiter<float> limiter;
     juce::AudioBuffer<float> buffer, loopInput;
     Looper looper;
+    PitchTap pitchTap;
+    juce::int64 timeline = 0;
     float guardGain = 1.0f, guardRelease = 0.0f;
 
     void applyPeakGuard (int numSamples) noexcept;

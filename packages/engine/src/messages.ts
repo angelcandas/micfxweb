@@ -29,6 +29,8 @@ export type ToWorklet =
   | { type: "looperExport" }
   /** The raw mic, for a sound check: "micChunk"s of about 0.1 s while on. */
   | { type: "captureMic"; on: boolean }
+  /** The Practice view's pitch tap: meters carry "pitch" readings while on. */
+  | { type: "pitch"; on: boolean }
   /** A sound check's room profile (power per bin) for the denoiser. */
   | { type: "noiseProfile"; bins: Float32Array };
 
@@ -51,7 +53,15 @@ export type FromWorklet =
   /** Every parameter's value and the order, after a preset changed them. */
   | { type: "values"; values: Values; order: string[] }
   | { type: "error"; message: string }
-  | ({ type: "meters"; status?: EngineStatus; transport: TransportState; recording: number; looper?: LooperState } & Meters)
+  | ({
+      type: "meters";
+      status?: EngineStatus;
+      transport: TransportState;
+      recording: number;
+      looper?: LooperState;
+      /** While the pitch tap is on: [position (samples), midi, level dB] per 5 ms reading. */
+      pitch?: Float64Array;
+    } & Meters)
   | ({ type: "takeChunk" } & TakeChunk)
   | { type: "looperLayers"; layers: [Float32Array, Float32Array][]; sampleRate: number }
   | { type: "micChunk"; samples: Float32Array }

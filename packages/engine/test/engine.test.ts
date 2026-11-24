@@ -313,4 +313,23 @@ describe("looper", () => {
     expect(engine.looperState().state).toBe("empty");
     engine.dispose();
   });
+
+  it("follows the singer's pitch for the Practice view, stamped with the timeline", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    engine.pitchEnable(true);
+    const input = voice(0.5);
+    const l = new Float32Array(BLOCK);
+    const r = new Float32Array(BLOCK);
+    for (let at = 0; at + BLOCK <= input.length; at += BLOCK) {
+      engine.setTimeline(RATE * 10 + at); // 10 s into the song
+      engine.render(input.subarray(at, at + BLOCK), l, r);
+    }
+    const readings = engine.readPitch();
+    expect(readings.length / 3).toBeGreaterThan(80); // every 5 ms
+    const last = readings.length - 3;
+    expect(readings[last]! / RATE).toBeGreaterThan(10.3);
+    expect(readings[last + 1]!).toBeCloseTo(57, 0); // 220 Hz is A3
+    expect(engine.readPitch().length).toBe(0);
+    engine.dispose();
+  });
 });

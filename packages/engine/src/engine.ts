@@ -95,6 +95,10 @@ interface Exports {
   free(pointer: number): void;
   micfx_detect_key(samples: number, frames: number, sampleRate: number): number;
   micfx_offer_noise_profile(engine: number, bins: number, count: number): number;
+  micfx_pitch_enable(engine: number, on: number): void;
+  micfx_set_timeline(engine: number, position: number): void;
+  micfx_pitch_read(engine: number): number;
+  micfx_pitch_readings(): number;
   micfx_looper_command(engine: number, command: number): number;
   micfx_looper_layer(engine: number, layer: number, gain: number, muted: number): void;
   micfx_looper_settings(engine: number, bpm: number, beatsPerBar: number, locked: number, volume: number): void;
@@ -318,6 +322,22 @@ export class LiveEngine {
     } finally {
       this.x.free(at);
     }
+  }
+
+  /** The Practice view's pitch tap (the mic after the input gain): off by default. */
+  pitchEnable(on: boolean): void {
+    this.x.micfx_pitch_enable(this.handle, on ? 1 : 0);
+  }
+
+  /** Where the next block starts on the sing-along timeline (samples), for the pitch readings. */
+  setTimeline(position: number): void {
+    this.x.micfx_set_timeline(this.handle, position);
+  }
+
+  /** The pitch readings since the last call: [position (samples), midi (0: none), level dB] each. */
+  readPitch(): Float64Array {
+    const count = this.x.micfx_pitch_read(this.handle);
+    return count ? new Float64Array(this.x.memory.buffer, this.x.micfx_pitch_readings(), count * 3).slice() : new Float64Array(0);
   }
 
   /** The room's profile from a sound check (power per bin) for the denoiser. True when it took it. */

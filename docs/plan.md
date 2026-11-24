@@ -154,7 +154,7 @@ Each PR is small enough to review, has CI, and UI PRs carry screenshots.
 6. **Devices, storage, latency**: input/output pickers, user presets and UI prefs in IndexedDB, latency readout.
 7. **Record and backing track**: WAV recording to download, backing track from file, key detection in a Worker.
 8. **Deploy**: Cloudflare Pages from CI (chosen over GitHub Pages; see docs/deploy.md), PWA manifest and offline cache, link to source.
-9+. Looper, scenes/setlist, MIDI learn; then Practice (voice-only songs → stems in a Worker → coaching and lyrics).
+9+. Looper, scenes/setlist, MIDI learn; then Practice (voice-only songs ✅ → stems in a Worker → coaching and lyrics).
 
 Then **MicFX DAW**: plan the `juce_events` shim (a message queue on the main thread) so `daw/*` and `Multitrack` can compile, decide where Auto Mix analysis runs (Workers, with the heavier learning parts possibly server-side), and reuse `daw.js` through the same bridge.
 
@@ -165,3 +165,49 @@ Then **MicFX DAW**: plan the `juce_events` shim (a message queue on the main thr
 - **Stem splitting speed** in the browser decides how Practice feels. If it is too slow on typical laptops, we offer voice-only songs and a later server option.
 - **Upstream changes** (parameter table, platform flag, wasm CI job) touch the desktop repo; they are behaviour-neutral there and go through its normal CI.
 - **Parameter list drift** until the shared table lands: covered by a generated, checked-in table and a test that compares it with the desktop's.
+
+## 9. Thirty more points (added 2026-11-24)
+
+These come after the PR sequence above (Voice, Practice, then the DAW), in the order below. Everything stays in the browser: no accounts, no server.
+
+### Voice: everyday use
+
+1. **Phone and tablet layout** for the Live view: one column, big knobs, the effect list as a sheet. Latency is shown honestly, so a phone suits recording and practice more than live monitoring.
+2. **Latency calibration**: a click played and heard back through the mic measures the real round trip. Recording, the looper and Practice scoring then line up on any device, Bluetooth included.
+3. **Metronome and count-in** for recording and the looper, with tempo tap.
+4. **Share a sound as a link**: the chain's values in the URL, so a sound opens in someone else's browser without a file or a server.
+5. **Backup and restore everything** (presets, scenes, setlist, Practice library, takes) as one `.micfxbackup` file, so a browser reset or a new computer loses nothing.
+6. **Storage view**: what this browser keeps and how big it is, delete per item, and the "keep my files" (persistent storage) request with a plain explanation.
+7. **Takes as MP3 or Opus** as well as WAV (LAME in wasm, already needed for the DAW), with the take's name and date in the file.
+8. **Video with your voice**: camera plus the processed voice recorded to a video file for social posts, with a preview.
+9. **Sing along to a browser tab** (Chrome and Edge): a YouTube or Spotify tab's sound as the backing track via tab capture, with a clear note on what each browser allows.
+10. **Show mode** for live use: full screen, big lyrics from the setlist, next song, foot pedal or keyboard to step, screen kept awake.
+11. **"Update ready" notice** for the installed app: the new version is downloaded in the background and starts on the next open, nothing lost mid-song.
+12. **First-run guide**: headphones check, mic permission help for each browser, and a 10-second "say something" test that picks a starting preset.
+13. **Spanish and English UI**, with the language from the browser and a switch in Settings.
+14. **Accessibility pass**: keyboard use for every control, screen reader names, focus order, high contrast and reduced motion.
+
+### Practice
+
+15. **Progress over time**: each song's pass scores kept, with a chart per song and "best this week".
+16. **Range finder**: a short test for your lowest and highest comfortable notes, then each song suggests the key that fits your voice.
+17. **Warm-ups**: scales, sirens and intervals generated in any key, sung and scored like a song.
+18. **Faster stem splitting** with WebGPU where the browser has it, falling back to the CPU path, with a time estimate before it starts.
+19. **Pass result card**: a picture of the score, pitch trail and song name to download and share.
+20. **Duet mode**: two parts of a song (lead and harmony) to pick from, each scored on its own.
+
+### MicFX DAW
+
+21. **Autosave and crash recovery**: the project saved to the browser every few seconds, with the last versions to go back to.
+22. **Open and save desktop projects**: a project folder from the desktop app opened with the folder picker (Chrome, Edge), or as a `.micfxproj` bundle with its audio anywhere else.
+23. **Undo history that survives a reload.**
+24. **Export in a Worker**: WAV, FLAC and MP3 renders with progress and cancel, while the project keeps playing.
+25. **Web MIDI**: keyboards and controllers in, MIDI clock out to drum machines, with MIDI learn shared with Voice.
+26. **Multi-input recording**: an audio interface's inputs as separate tracks, armed per track.
+27. **Auto Mix in the browser**: the analysis spread over several Workers (one per track), with the desktop's mix plans and the audition list.
+28. **Send between the apps**: a Voice take or Practice song opens in the DAW, and a DAW mix opens in Voice as a backing track. The two apps sit on different subdomains, so their storage is separate and this goes through a hand-off window, not shared storage.
+
+### Both apps
+
+29. **Drag and drop anywhere**: audio, MIDI, `.micfxset`, presets and backups dropped on the page go where they belong.
+30. **Diagnostics page**: device, sample rate, buffer, glitches, CPU, browser and build version, with a "copy for support" button, and a SIMD engine build with a CPU meter that warns before the sound breaks up.

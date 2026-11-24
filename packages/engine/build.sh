@@ -72,7 +72,7 @@ mapfile -t engine_objects < <(compile "$work/obj" flags \
   "$here/cpp/juce_modules.cpp" "$here/cpp/juce_wasm_stubs.cpp" "$here/cpp/LiveEngine.cpp" "$here/cpp/api.cpp" \
   "$desktop/src/Parameters.cpp" "$desktop/src/Presets.cpp" "$desktop/src/analysis/Chords.cpp" "$desktop/src/analysis/Key.cpp" \
   "$desktop/src/Looper.cpp")
-link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied,_micfx_offer_noise_profile 65536 "${engine_objects[@]}"
+link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied,_micfx_offer_noise_profile,_micfx_pitch_enable,_micfx_set_timeline,_micfx_pitch_read,_micfx_pitch_readings 65536 "${engine_objects[@]}"
 
 # The analysis code reaches the DAW engine in places the sound check never calls; the
 # linker drops those, so only what the exports use is built in.
@@ -80,5 +80,5 @@ mapfile -t analysis_objects < <(compile "$work/obj-studio" studio_flags \
   "$here/cpp/juce_studio_modules.cpp" "$here/cpp/analysis_api.cpp" \
   "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp)
 # The analysis keeps big frames on the stack: 1 MB of it (the engine's default 64 KB is plenty there).
-link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile 1048576 \
+link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile,_micfx_find_melody,_micfx_score_song,_micfx_score_frames,_micfx_score_restart,_micfx_score_time,_micfx_score_changes,_micfx_score_report 1048576 \
   "$work/obj/juce_modules.o" "$work/obj/juce_wasm_stubs.o" "${analysis_objects[@]}"

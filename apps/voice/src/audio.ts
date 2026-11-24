@@ -19,7 +19,7 @@ export interface RecordedTake {
 }
 
 /** The meters with the transport and the recorder, as the worklet sends them. */
-export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown; looper?: LooperState };
+export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown; looper?: LooperState; pitch?: Float64Array };
 
 export interface LiveAudioInfo {
   values: ValueInfo[];
@@ -250,6 +250,11 @@ export class LiveAudio {
   }
 
   /** The raw mic in chunks of about 0.1 s (onMicChunk), for a sound check. */
+  /** The Practice view's pitch tap: meters carry the mic's pitch readings while on. */
+  pitch(on: boolean): void {
+    this.post({ type: "pitch", on });
+  }
+
   captureMic(on: boolean): void {
     this.post({ type: "captureMic", on });
   }

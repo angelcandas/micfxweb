@@ -81,4 +81,38 @@ describe("analysis.wasm", () => {
     expect(plan.error).not.toBe("");
     expect(plan.values).toEqual([]);
   });
+
+  it("finds the melody of a voice and scores singing against it, as Practice does", () => {
+    const { melody, key } = analysis.findMelody(singing(16), RATE);
+    expect(melody).not.toBe("");
+    expect(typeof key).toBe("string");
+    const song = analysis.scoreSong(melody);
+    const notes = song.notes.length / 4;
+    expect(notes).toBeGreaterThan(3);
+    expect(song.phrases.length / 2).toBeGreaterThan(1);
+    expect(song.lowest).toBeGreaterThan(50);
+    expect(song.highest).toBeLessThan(65);
+
+    // Sing every note in tune, 5 ms at a time, and play the song to its end.
+    const frames: number[] = [];
+    for (let i = 0; i < notes; ++i) {
+      const [start, end, pitch] = song.notes.slice(i * 4, i * 4 + 3) as [number, number, number];
+      for (let t = start; t < end; t += 0.005) frames.push(t, pitch);
+    }
+    const end = song.notes[song.notes.length - 3]! + 1;
+    analysis.scoreFrames(new Float64Array(frames), end);
+    const changes = analysis.scoreChanges();
+    expect(changes?.reset).toBe(true);
+    expect(changes?.notes.length).toBe(notes);
+    expect(changes?.pass).toBeGreaterThan(80);
+    expect(analysis.scoreChanges()).toBeUndefined(); // nothing new since
+
+    const report = analysis.scoreReport();
+    expect(report.scored).toBe(song.phrases.length / 2);
+    expect(report.score).toBeGreaterThan(80);
+
+    // A jump back: what follows is sung again.
+    analysis.scoreRestart(0);
+    expect(analysis.scoreChanges(true)?.notes.length).toBe(0);
+  });
 });

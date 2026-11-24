@@ -25,6 +25,30 @@ interface Exports {
     lowCutHz: number,
   ): number;
   micfx_noise_profile(): number;
+  micfx_find_melody(samples: number, frames: number, sampleRate: number, keySamples: number, keyFrames: number): number;
+  micfx_score_song(text: number, length: number): number;
+  micfx_score_frames(frames: number, count: number, songTime: number): void;
+  micfx_score_restart(songTime: number): void;
+  micfx_score_time(songTime: number): void;
+  micfx_score_changes(all: number): number;
+  micfx_score_report(): number;
+}
+
+/** A melody as the Practice view draws it: [start, end, pitch, phrase] per note, [start, end] per phrase. */
+export interface PracticeSong {
+  notes: number[];
+  phrases: number[];
+  lowest: number;
+  highest: number;
+}
+
+/** The desktop's describeScores. */
+export interface PracticeScores {
+  reset: boolean;
+  from: number;
+  notes: Record<string, number | boolean>[];
+  phrases: Record<string, number | boolean>[];
+  pass: number;
 }
 
 /**
@@ -104,6 +128,69 @@ export class Analysis {
     } finally {
       this.x.free(at);
     }
+  }
+
+  /**
+   * Practice: the melody to sing in a voice (Song::toString text, "" when there's none) and
+   * the song's key (from `keyAudio`, the backing, when given; else the voice).
+   */
+  findMelody(voice: Float32Array, sampleRate: number, keyAudio?: Float32Array): { melody: string; key: string } {
+    const at = this.copyIn(voice);
+    const keyAt = keyAudio?.length ? this.copyIn(keyAudio) : 0;
+    try {
+      return JSON.parse(this.read(this.x.micfx_find_melody(at, voice.length, sampleRate, keyAt, keyAt ? keyAudio!.length : 0))) as { melody: string; key: string };
+    } finally {
+      this.x.free(at);
+      if (keyAt) this.x.free(keyAt);
+    }
+  }
+
+  /** Practice scoring: the song to score from now on (its melody text). */
+  scoreSong(melody: string): PracticeSong {
+    const bytes = new TextEncoder().encode(melody);
+    const at = this.x.malloc(Math.max(1, bytes.length));
+    try {
+      new Uint8Array(this.x.memory.buffer, at, bytes.length).set(bytes);
+      return JSON.parse(this.read(this.x.micfx_score_song(at, bytes.length))) as PracticeSong;
+    } finally {
+      this.x.free(at);
+    }
+  }
+
+  /** Sung frames ([time, midi] pairs, song time) up to `songTime`; notes that ended are scored. */
+  scoreFrames(frames: Float64Array, songTime: number): void {
+    const at = this.x.malloc(Math.max(8, frames.length * 8));
+    try {
+      new Float64Array(this.x.memory.buffer, at, frames.length).set(frames);
+      this.x.micfx_score_frames(at, frames.length / 2, songTime);
+    } finally {
+      this.x.free(at);
+    }
+  }
+
+  scoreRestart(songTime: number): void {
+    this.x.micfx_score_restart(songTime);
+  }
+
+  scoreTime(songTime: number): void {
+    this.x.micfx_score_time(songTime);
+  }
+
+  /** Every score so far (all), or what changed since the last call (undefined when nothing did). */
+  scoreChanges(all = false): PracticeScores | undefined {
+    const length = this.x.micfx_score_changes(all ? 1 : 0);
+    return length < 0 ? undefined : (JSON.parse(this.read(length)) as PracticeScores);
+  }
+
+  scoreReport(): Record<string, unknown> {
+    return JSON.parse(this.read(this.x.micfx_score_report())) as Record<string, unknown>;
+  }
+
+  private copyIn(samples: Float32Array): number {
+    const at = this.x.malloc(Math.max(1, samples.length) * 4);
+    if (!at) throw new Error("Not enough memory for the analysis.");
+    new Float32Array(this.x.memory.buffer, at, samples.length).set(samples);
+    return at;
   }
 
   private read(length: number): string {
