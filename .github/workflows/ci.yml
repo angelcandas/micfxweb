@@ -38,3 +38,64 @@ jobs:
       - run: pnpm test
         env:
           CI: true
+      - name: Keep the built Voice app for the deploy
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-dist
+          path: apps/voice/dist
+          retention-days: 7
+
+  # MicFX Voice on Cloudflare Pages, after the tests pass on main. Needs the repository
+  # secrets CLOUDFLARE_API_TOKEN (Cloudflare Pages: Edit) and CLOUDFLARE_ACCOUNT_ID; the
+  # variable VOICE_DOMAIN (e.g. micfxvoice.example.com) attaches the custom domain.
+  # Without the secrets the job says so and passes. See docs/deploy.md.
+  deploy-voice:
+    name: Deploy MicFX Voice
+    needs: web
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-voice
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT: micfxvoice
+      DOMAIN: ${{ vars.VOICE_DOMAIN }}
+    steps:
+      - name: Check the Cloudflare secrets
+        id: secrets
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID aren't set: skipping the deploy (see docs/deploy.md)."
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secrets.outputs.ready
+        with:
+          name: voice-dist
+          path: dist
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready
+        with:
+          node-version: 22
+      - name: Create the Pages project (first deploy only)
+        if: steps.secrets.outputs.ready
+        run: npx --yes wrangler@4.160.0 pages project create "$PROJECT" --production-branch=main || echo "Project already exists"
+      - name: Upload
+        if: steps.secrets.outputs.ready
+        run: npx --yes wrangler@4.160.0 pages deploy dist --project-name="$PROJECT" --branch=main --commit-hash="$GITHUB_SHA"
+      - name: Attach the custom domain
+        if: steps.secrets.outputs.ready && env.DOMAIN != ''
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
+          if curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | grep -q "\"name\":\"$DOMAIN\""; then
+            echo "$DOMAIN is already attached"
+          else
+            curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+                 --data "{\"name\":\"$DOMAIN\"}" "$api" > /dev/null
+            echo "Attached $DOMAIN (Cloudflare adds the DNS record when the zone is on Cloudflare)"
+          fi
