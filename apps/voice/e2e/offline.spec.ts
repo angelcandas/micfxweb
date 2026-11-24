@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 test("keeps the whole app for offline use, and links to its source", async ({ page, context }) => {
   await page.goto("/");
   await expect(page.locator(".effect-item").first()).toBeVisible();
-  await expect(page.locator(".web-source:visible").first()).toHaveAttribute("href", "https://github.com/angelcandas/micfxweb");
+  await expect(page.locator(".web-source:visible").first()).toHaveAttribute("href", "source.zip");
   const manifest = await page.evaluate(() => fetch(document.querySelector<HTMLLinkElement>('link[rel="manifest"]')!.href).then((r) => r.json()));
   expect(manifest).toMatchObject({ name: "MicFX Voice", display: "standalone" });
 

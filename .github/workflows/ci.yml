@@ -33,6 +33,9 @@ jobs:
         run: pnpm --filter @micfx/engine build
       - run: pnpm typecheck
       - run: pnpm build
+      # The app's source beside it (AGPLv3), for its "Source" link.
+      - name: Put the source archive in the Voice build
+        run: bash scripts/source-archive.sh apps/voice/dist/source.zip
       - name: Install Chromium for the browser tests
         run: pnpm --filter @micfx/voice exec playwright install --with-deps chromium
       # The stem splitter's weights (84 MB, the desktop's file), for the test that separates a song.

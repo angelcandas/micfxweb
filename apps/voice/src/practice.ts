@@ -6,7 +6,7 @@
 // so the library opens it again at once. It plays on the Live tracks; the worklet's pitch
 // tap (the mic before the effects) is scored against it by the desktop's scoring
 // (analysis.wasm on the page), and the page hears back on the desktop's events.
-import type { PracticeScores, PracticeSong } from "@micfx/engine/analysis";
+import type { PracticeLyrics, PracticeScores, PracticeSong, SongSection } from "@micfx/engine/analysis";
 
 /** How the analysis on the page scores (Analysis from @micfx/engine/analysis). */
 export interface PracticeScorer {
@@ -16,6 +16,10 @@ export interface PracticeScorer {
   scoreTime(songTime: number): void;
   scoreChanges(all?: boolean): PracticeScores | undefined;
   scoreReport(): Record<string, unknown>;
+  lyricsSet(text: string, kept?: boolean): PracticeLyrics;
+  lyricsAlign(all: boolean): PracticeLyrics;
+  lyricsNudge(index: number, seconds: number): PracticeLyrics;
+  scoreShift(semitones: number, speed: number, songTime: number): PracticeSong;
 }
 
 /** A song's folder of files. */
@@ -36,6 +40,7 @@ export interface PracticeHost {
   encodeWav(channels: Float32Array[], rate: number): Blob;
   findMelody(voice: Float32Array, rate: number, keyAudio?: Float32Array): Promise<{ melody: string; key: string }>;
   pickFile(accept: string): Promise<File | undefined>;
+  download(blob: Blob, name: string): void;
   /** The song on the Live tracks in place of what was there; the guide's track id. */
   install(guide: File, backing: File | undefined, guideLevel: number): Promise<number | undefined>;
   /** The guide track's level (muted at 0). */
@@ -44,6 +49,14 @@ export interface PracticeHost {
   trackIds(): number[];
   /** Back to the start, stopped. */
   restart(): void;
+  /** Moves the playhead (seconds), playing on when `play`. */
+  seek(seconds: number, play: boolean): void;
+  /** Loops from..to seconds on the Live tracks; none ends it. */
+  loop(from?: number, to?: number): void;
+  /** The song's sections, from its audio (mono). */
+  sections(mono: Float32Array, rate: number): Promise<SongSection[]>;
+  /** The audio `speed` times as fast and moved by `semitones` (`voice`: a voice's formants kept). */
+  warp(channels: Float32Array[], rate: number, speed: number, semitones: number, voice: boolean): Promise<Float32Array[]>;
   pitch(on: boolean): void;
   /** Mic in to speaker out, in seconds. */
   latency(): number;
@@ -68,8 +81,12 @@ const AUDIO = "audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a";
 const RATE = 44100; // the desktop's (the stem model's)
 const MELODY = "melody.txt";
 const GUIDE = "guide.wav";
+const LYRICS = "lyrics.txt";
 const BACKING = "backing.wav";
 const INFO = "info.json";
+const SECTIONS = "sections.json";
+const LOOP_LEAD_IN = 1.5; // seconds before a looped phrase or section
+const LOOP_TAIL = 0.6; // and after it
 const SAVED_KEY_LEVEL = "guideLevel";
 
 interface Job {
@@ -85,6 +102,24 @@ interface Current {
   melody: string;
   song: PracticeSong;
   guideId: number | undefined;
+  lyrics: PracticeLyrics["lines"];
+  /** The melody as it is (song: as it plays, in another key or speed). */
+  base: PracticeSong;
+  sections: SongSection[] | "finding" | null;
+}
+
+interface Shift {
+  speed: number;
+  semitones: number;
+}
+
+interface Loop extends Shift {
+  phrase: number;
+  lastPhrase: number;
+  section: number;
+  /** In the song as it is, seconds. */
+  from: number;
+  to: number;
 }
 
 export class Practice {
@@ -96,6 +131,12 @@ export class Practice {
   private lastSongTime = 0;
   private wasPlaying = false;
   private scorer: PracticeScorer | undefined;
+  private lastLrc = "";
+  private shift: Shift = { speed: 1, semitones: 0 };
+  private pending: (Shift & { progress: number }) | undefined;
+  private shiftToken = 0;
+  private loopState: Loop | undefined;
+  private playing = false;
 
   constructor(private readonly host: PracticeHost) {
     try {
@@ -109,11 +150,17 @@ export class Practice {
   /** The song from the last visit, when its guide is still on the Live tracks. */
   async restore(): Promise<void> {
     try {
-      const saved = JSON.parse(this.host.load() ?? "null") as { folder?: string; guideId?: number } | null;
+      const saved = JSON.parse(this.host.load() ?? "null") as { folder?: string; guideId?: number; shift?: Shift } | null;
       if (!saved?.folder || typeof saved.guideId !== "number" || !this.host.trackIds().includes(saved.guideId)) return;
       const loaded = await this.loadFolder(saved.folder);
       if (!loaded || this.current) return;
       await this.setCurrent(saved.folder, loaded.info, loaded.melody, saved.guideId);
+      // The tracks are the song in the key and speed it had.
+      const current = this.current as Current | undefined; // (set by setCurrent)
+      if (saved.shift && Number.isFinite(saved.shift.speed) && Number.isFinite(saved.shift.semitones) && current) {
+        this.shift = { speed: saved.shift.speed, semitones: saved.shift.semitones };
+        current.song = this.scorer!.scoreShift(this.shift.semitones, this.shift.speed, 0);
+      }
       this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: true, quiet: true });
     } catch {
       // nothing to pick up
@@ -156,6 +203,12 @@ export class Practice {
       }
       case "cancel":
         if (this.job) this.job.cancelled = true;
+        if (this.pending) {
+          // A key or speed change not heard yet: stay as we are.
+          this.pending = undefined;
+          this.shiftToken++;
+          this.host.emit("practice", { state: "shifting", shift: this.describeShift() });
+        }
         break;
       case "view":
         this.viewOpen = Boolean(options.open);
@@ -176,15 +229,49 @@ export class Practice {
       case "report":
         return this.scorer && this.current ? this.scorer.scoreReport() : null;
       case "lyrics":
+        return this.setLyrics(this.scorer && this.current ? this.scorer.lyricsSet(String(options.text ?? "")) : undefined, false);
+      case "importLyrics": {
+        if (!this.current) return { ok: false };
+        const file = await this.host.pickFile(".lrc,.txt,text/plain");
+        if (!file) return { ok: false };
+        if (file.size > 1024 * 1024) {
+          this.host.emit("practice", { state: "error", error: `${file.name} is too big for lyrics.` });
+          return { ok: false };
+        }
+        this.setLyrics(this.scorer!.lyricsSet(await file.text()), true);
+        return { ok: true };
+      }
+      case "exportLyrics": {
+        const lrc = this.current && this.scorer ? this.lastLrc : "";
+        if (!lrc) return { ok: false };
+        this.host.download(new Blob([lrc], { type: "text/plain" }), `${this.current!.info.name}.lrc`);
+        return { ok: true };
+      }
       case "alignLyrics":
-      case "nudgeLyric":
-        return [];
+        return this.setLyrics(this.scorer && this.current ? this.scorer.lyricsAlign(Boolean(options.all)) : undefined, false);
+      case "nudgeLyric": {
+        const index = Number(options.line);
+        const line = this.current?.lyrics[index];
+        if (!line || !this.scorer) return this.describeLyrics();
+        // (`at` and `by` are in the song as it plays: a second at 50% speed is half a second of it)
+        const by = typeof options.at === "number" ? options.at * this.shift.speed - line.start : (Number(options.by) || 0) * this.shift.speed;
+        return this.setLyrics(this.scorer.lyricsNudge(index, by), false);
+      }
       case "sections":
-        this.host.emit("practice", { state: "sections", sections: [], error: "Finding a song's sections is coming to the web soon." });
+        void this.findSections();
+        break;
+      case "speed":
+        await this.startShift(Number(options.speed ?? 1), Number(options.semitones ?? 0));
         break;
       case "loop":
-      case "speed":
-        this.host.emit("practice", { state: "error", error: "Loops and key or speed changes are coming to the web soon." });
+        await this.startLoop(options);
+        break;
+      case "unloop":
+        if (this.loopState) {
+          this.loopState = undefined;
+          this.host.loop();
+        }
+        this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: true, quiet: true });
         break;
     }
     return this.describe();
@@ -209,6 +296,7 @@ export class Practice {
     const latency = this.host.latency();
     const position = transport.position;
     const playing = transport.playing;
+    this.playing = playing;
     const songTime = Math.max(0, position - latency);
     const scorer = this.current ? this.scorer : undefined;
 
@@ -318,11 +406,13 @@ export class Practice {
   }
 
   private async install(folder: string, info: Info, melody: string): Promise<string> {
-    const guideBlob = await this.host.store.read(folder, info.guide);
-    const backingBlob = info.backing ? await this.host.store.read(folder, info.backing) : undefined;
-    if (!guideBlob || (info.backing && !backingBlob)) return "This song's saved files are incomplete. Open the song again.";
-    const guide = new File([guideBlob], info.guide);
-    const backing = backingBlob && new File([backingBlob], info.backing);
+    let files: { guide: File; backing?: File };
+    try {
+      files = await this.originalFiles({ folder, info });
+    } catch {
+      return "This song's saved files are incomplete. Open the song again.";
+    }
+    const { guide, backing } = files;
     const guideId = await this.host.install(guide, backing, this.guideLevel);
     info.opened = this.now();
     await this.host.store.write(folder, INFO, JSON.stringify(info)).catch(() => {});
@@ -330,10 +420,226 @@ export class Practice {
     return "";
   }
 
+  /** New lyrics: kept in the song's folder, and to the page (as an event too when `announce`). */
+  private setLyrics(lyrics: PracticeLyrics | undefined, announce: boolean) {
+    if (!lyrics || !this.current) return [];
+    this.current.lyrics = lyrics.lines;
+    this.lastLrc = lyrics.lrc;
+    void this.host.store.write(this.current.folder, LYRICS, lyrics.saved).catch(() => {});
+    if (announce) this.host.emit("practice", { state: "lyrics", lyrics: this.describeLyrics() });
+    return this.describeLyrics();
+  }
+
+  /** The lyrics in the song as it plays (moved for a speed change). */
+  private describeLyrics() {
+    const speed = this.shift.speed;
+    return (this.current?.lyrics ?? []).map((line) => ({
+      ...line,
+      start: round3(line.start / speed),
+      end: round3(line.end / speed),
+      words: line.words.map((w, i) => (i % 2 ? round3((w as number) / speed) : w)),
+    }));
+  }
+
+  //==============================================================================
+  // Key and speed: the song rendered again (the DAW's Warp, in a Worker) and kept in its
+  // folder, then swapped in where it was; the melody moves with it.
+  private describeShift() {
+    const pending = this.pending;
+    return {
+      speed: this.shift.speed,
+      semitones: this.shift.semitones,
+      pending: Boolean(pending),
+      target: pending ? { speed: pending.speed, semitones: pending.semitones } : null,
+      progress: pending ? round3(pending.progress) : 1,
+    };
+  }
+
+  private async startShift(speedIn: number, semitonesIn: number) {
+    const current = this.current;
+    if (!current || !this.scorer) return;
+    const speed = Math.round(Math.min(1.5, Math.max(0.5, Number.isFinite(speedIn) ? speedIn : 1)) * 1000) / 1000;
+    const semitones = Math.round(Math.min(12, Math.max(-12, Number.isFinite(semitonesIn) ? semitonesIn : 0)) * 100) / 100;
+    const token = ++this.shiftToken;
+    if (Math.abs(speed - this.shift.speed) < 1e-3 && Math.abs(semitones - this.shift.semitones) < 5e-3) {
+      this.pending = undefined;
+      this.host.emit("practice", { state: "shifting", shift: this.describeShift() });
+      return;
+    }
+    this.pending = { speed, semitones, progress: 0 };
+    this.host.emit("practice", { state: "shifting", shift: this.describeShift() });
+
+    let files: { guide: File; backing?: File };
+    try {
+      files = await this.versionFiles(current, speed, semitones, (progress) => {
+        if (token !== this.shiftToken || !this.pending) return;
+        this.pending.progress = progress;
+        this.host.emit("practice", { state: "shifting", shift: this.describeShift() });
+      });
+    } catch (error) {
+      if (token !== this.shiftToken) return;
+      this.pending = undefined;
+      this.host.emit("practice", { state: "error", error: `Couldn't change the key or speed: ${error instanceof Error ? error.message : String(error)}` });
+      return;
+    }
+    if (token !== this.shiftToken || this.current !== current) return; // a newer change, or cancelled
+
+    // Swapped in where we are, in the song as it is.
+    const original = Math.max(0, this.lastPosition) * this.shift.speed;
+    const playing = this.playing;
+    const guideId = await this.host.install(files.guide, files.backing, this.guideLevel);
+    if (token !== this.shiftToken || this.current !== current) return;
+    this.shift = { speed, semitones };
+    this.pending = undefined;
+    current.guideId = guideId;
+    const position = original / speed;
+    current.song = this.scorer.scoreShift(semitones, speed, position);
+    if (this.loopState) this.applyLoop(false);
+    this.host.seek(position, playing);
+    this.lastPosition = position;
+    this.lastSongTime = position;
+    this.persist();
+    this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: true, quiet: true });
+  }
+
+  /** The guide and backing in a key and speed: the originals, kept ones, or rendered now. */
+  private async versionFiles(current: Current, speed: number, semitones: number, progress: (p: number) => void): Promise<{ guide: File; backing?: File }> {
+    const { folder, info } = current;
+    const original = await this.originalFiles(current);
+    if (Math.abs(speed - 1) < 1e-3 && Math.abs(semitones) < 5e-3) return original;
+    const name = (part: string) => `shift-${speed.toFixed(3)}-${semitones.toFixed(2)}-${part}.wav`;
+    // (what the Live tracks show: "Song (voice, +2 st, 75%).wav")
+    const shown = (voice: boolean) => {
+      const what = [voice ? "voice" : "backing", semitones ? `${semitones > 0 ? "+" : "−"}${Math.abs(semitones)} st` : "", speed !== 1 ? `${Math.round(speed * 100)}%` : ""];
+      return `${info.name} (${what.filter(Boolean).join(", ")}).wav`;
+    };
+    const keptGuide = await this.host.store.read(folder, name("guide"));
+    const keptBacking = info.backing ? await this.host.store.read(folder, name("backing")) : undefined;
+    if (keptGuide && (!info.backing || keptBacking))
+      return { guide: new File([keptGuide], shown(true)), backing: keptBacking && new File([keptBacking], shown(false)) };
+
+    const parts = original.backing ? 2 : 1;
+    const render = async (file: File, voice: boolean, index: number) => {
+      progress(index / parts);
+      const audio = await this.host.decode(file, RATE);
+      const warped = await this.host.warp(audio, RATE, speed, semitones, voice);
+      const blob = this.host.encodeWav(warped, RATE);
+      await this.host.store.write(folder, name(voice ? "guide" : "backing"), blob).catch(() => {});
+      return new File([blob], shown(voice));
+    };
+    const backing = original.backing ? await render(original.backing, false, 0) : undefined;
+    const guide = await render(original.guide, true, parts - 1);
+    progress(1);
+    return { guide, backing };
+  }
+
+  private async originalFiles({ folder, info }: Pick<Current, "folder" | "info">): Promise<{ guide: File; backing?: File }> {
+    const guide = await this.host.store.read(folder, info.guide);
+    const backing = info.backing ? await this.host.store.read(folder, info.backing) : undefined;
+    if (!guide || (info.backing && !backing)) throw new Error("this song's saved files are incomplete");
+    // (a split song's stems show as "Song (voice).wav" and "Song (backing).wav")
+    const guideName = info.backing ? `${info.name} (voice).wav` : info.guide;
+    return { guide: new File([guide], guideName), backing: backing && new File([backing], `${info.name} (backing).wav`) };
+  }
+
+  //==============================================================================
+  // Loops: a phrase or a section plays round and round (in the key and speed asked for).
+  private async startLoop(options: Record<string, unknown>) {
+    const current = this.current;
+    if (!current) return;
+    const phrases = current.base.phrases;
+    const seconds = current.info.seconds;
+    let range: Omit<Loop, keyof Shift> | undefined;
+    if (typeof options.section === "number") {
+      const section = Array.isArray(current.sections) ? current.sections[options.section] : undefined;
+      if (!section) return;
+      let first = -1;
+      let last = -1;
+      for (let i = 0; i * 2 < phrases.length; ++i) {
+        const start = phrases[i * 2]!;
+        if (start >= section.start - 0.25 && start < section.end - 0.25) {
+          if (first < 0) first = i;
+          last = i;
+        }
+      }
+      range = { phrase: first, lastPhrase: last, section: options.section, from: Math.max(0, section.start - LOOP_LEAD_IN), to: Math.min(seconds || Infinity, section.end + LOOP_TAIL) };
+    } else {
+      const phrase = Number(options.phrase);
+      if (!Number.isInteger(phrase) || phrase < 0 || phrase * 2 >= phrases.length) return;
+      range = { phrase, lastPhrase: phrase, section: -1, from: Math.max(0, phrases[phrase * 2]! - LOOP_LEAD_IN), to: Math.min(seconds || Infinity, phrases[phrase * 2 + 1]! + LOOP_TAIL) };
+    }
+    const speed = Number(options.speed ?? this.shift.speed);
+    const semitones = Number(options.semitones ?? this.shift.semitones);
+    this.loopState = { ...range, speed, semitones };
+    this.applyLoop(true);
+    this.host.emit("practice", { state: "loop", song: this.describeSong() });
+    if (Math.abs(speed - this.shift.speed) >= 1e-3 || Math.abs(semitones - this.shift.semitones) >= 5e-3) await this.startShift(speed, semitones);
+  }
+
+  /** The loop's region on the tracks as they play now; from its start when `start`. */
+  private applyLoop(start: boolean) {
+    const loop = this.loopState;
+    if (!loop) return;
+    const speed = this.shift.speed;
+    this.host.loop(loop.from / speed, loop.to / speed);
+    if (start) {
+      this.host.seek(loop.from / speed, true);
+      this.lastPosition = loop.from / speed;
+      this.restartFrom(loop.from / speed);
+    }
+  }
+
+  //==============================================================================
+  private async findSections() {
+    const current = this.current;
+    if (!current) {
+      this.host.emit("practice", { state: "sections", sections: null, error: "Open a song first." });
+      return;
+    }
+    if (current.sections === "finding") return;
+    if (Array.isArray(current.sections)) {
+      this.host.emit("practice", { state: "sections", sections: current.sections });
+      return;
+    }
+    current.sections = "finding";
+    this.host.emit("practice", { state: "sections", sections: "finding" });
+    try {
+      const { guide, backing } = await this.originalFiles(current);
+      const parts = await Promise.all([guide, backing].filter((f): f is File => Boolean(f)).map((f) => this.host.decode(f, RATE)));
+      const length = Math.max(...parts.map((p) => p[0]!.length));
+      const mix = new Float32Array(length);
+      for (const channels of parts) for (const channel of channels) for (let i = 0; i < channel.length; ++i) mix[i]! += channel[i]! / channels.length;
+      const sections = await this.host.sections(mix, RATE);
+      if (this.current !== current) return;
+      current.sections = sections;
+      await this.host.store.write(current.folder, SECTIONS, JSON.stringify(sections)).catch(() => {});
+      this.host.emit("practice", { state: "sections", sections });
+    } catch (error) {
+      if (this.current !== current) return;
+      current.sections = null;
+      this.host.emit("practice", { state: "sections", sections: null, error: `Couldn't find the sections: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+
   private async setCurrent(folder: string, info: Info, melody: string, guideId: number | undefined) {
     this.scorer ??= await this.host.scorer();
     const song = this.scorer.scoreSong(melody);
-    this.current = { folder, info, melody, song, guideId };
+    const kept = await (await this.host.store.read(folder, LYRICS))?.text().catch(() => "");
+    const lyrics = kept ? this.scorer.lyricsSet(kept, true) : undefined;
+    this.lastLrc = lyrics?.lrc ?? "";
+    let sections: SongSection[] | null = null;
+    try {
+      const text = await (await this.host.store.read(folder, SECTIONS))?.text();
+      if (text) sections = JSON.parse(text) as SongSection[];
+    } catch {
+      // found again when asked
+    }
+    this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections };
+    this.shift = { speed: 1, semitones: 0 };
+    this.pending = undefined;
+    this.shiftToken++;
+    if (this.loopState) this.host.loop();
+    this.loopState = undefined;
     this.lastPosition = -1;
     this.lastSongTime = 0;
     this.persist();
@@ -381,10 +687,12 @@ export class Practice {
       ...current.song,
       hasBacking: Boolean(current.info.backing),
       key: current.info.key,
-      shift: { speed: 1, semitones: 0, pending: false, target: null, progress: 1 },
-      lyrics: [],
-      sections: null,
-      loop: null,
+      shift: this.describeShift(),
+      lyrics: this.describeLyrics(),
+      sections: current.sections,
+      loop: this.loopState
+        ? { ...this.loopState, from: round3(this.loopState.from), to: round3(this.loopState.to) }
+        : null,
     };
   }
 
@@ -394,7 +702,7 @@ export class Practice {
   }
 
   private persist() {
-    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1 }));
+    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1, shift: this.shift }));
   }
 
   private now() {

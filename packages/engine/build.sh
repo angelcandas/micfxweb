@@ -78,9 +78,9 @@ link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_
 # linker drops those, so only what the exports use is built in.
 mapfile -t analysis_objects < <(compile "$work/obj-studio" studio_flags \
   "$here/cpp/juce_studio_modules.cpp" "$here/cpp/analysis_api.cpp" \
-  "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp)
+  "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp "$desktop/src/daw/Warp.cpp")
 # The analysis keeps big frames on the stack: 1 MB of it (the engine's default 64 KB is plenty there).
-link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile,_micfx_find_melody,_micfx_score_song,_micfx_score_frames,_micfx_score_restart,_micfx_score_time,_micfx_score_changes,_micfx_score_report 1048576 \
+link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile,_micfx_find_melody,_micfx_score_song,_micfx_score_frames,_micfx_score_restart,_micfx_score_time,_micfx_score_changes,_micfx_score_report,_micfx_lyrics_set,_micfx_lyrics_align,_micfx_lyrics_nudge,_micfx_song_sections,_micfx_score_shift,_micfx_warp_render,_micfx_warp_output,_micfx_warp_free 1048576 \
   "$work/obj/juce_modules.o" "$work/obj/juce_wasm_stubs.o" "${analysis_objects[@]}"
 
 # stems.wasm: the stem splitter network (demucs.cpp, MIT, on Eigen, MPL 2.0: the desktop's

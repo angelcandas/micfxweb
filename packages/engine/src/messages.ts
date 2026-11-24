@@ -19,6 +19,8 @@ export type ToWorklet =
   | { type: "removeTrack"; id: number }
   | { type: "setTrack"; id: number; options: TrackOptions }
   | { type: "transport"; action: TransportAction; seconds?: number }
+  /** Loops from..to seconds (Practice); without them, the loop ends. */
+  | { type: "loop"; from?: number; to?: number }
   /** Starts a take (and plays), or ends it: "takeChunk"s then "takeEnd" follow. */
   | { type: "record"; on: boolean; dry?: boolean }
   /** The looper: a button, a layer's gain or mute, or its tempo and volume. */

@@ -13,7 +13,7 @@ import { Tracks, decodeChannels, encodeWav, download, songFiles } from "./tracks
 import { splitVoice } from "./stems-client";
 import { Setlist } from "./setlist";
 import { SoundCheck } from "./sound-check";
-import { findMelody, pageAnalysis, soundCheckPlan } from "./analysis-client";
+import { findMelody, pageAnalysis, songSections, soundCheckPlan, warpAudio } from "./analysis-client";
 import { Practice, opfsStore } from "./practice";
 import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
@@ -285,6 +285,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     encodeWav,
     findMelody,
     pickFile,
+    download,
     install: async (guide, backing, level) => {
       transport = { ...transport, position: 0, playing: false };
       audio.transport("stop", 0);
@@ -298,6 +299,14 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       transport = { ...transport, position: 0, playing: false };
       audio.transport("stop", 0);
     },
+    seek: (seconds, play) => {
+      transport = { ...transport, position: seconds, playing: play && audio.running };
+      audio.transport("seek", seconds);
+      if (play) audio.transport("play");
+    },
+    loop: (from, to) => audio.loop(from, to),
+    sections: songSections,
+    warp: warpAudio,
     pitch: (on) => {
       practiceOn = on;
       audio.pitch(on);

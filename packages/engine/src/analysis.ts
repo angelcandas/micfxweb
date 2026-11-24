@@ -32,6 +32,32 @@ interface Exports {
   micfx_score_time(songTime: number): void;
   micfx_score_changes(all: number): number;
   micfx_score_report(): number;
+  micfx_lyrics_set(text: number, length: number, kept: number): number;
+  micfx_lyrics_align(all: number): number;
+  micfx_lyrics_nudge(index: number, seconds: number): number;
+  micfx_song_sections(samples: number, frames: number, sampleRate: number): number;
+  micfx_score_shift(semitones: number, speed: number, songTime: number): number;
+  micfx_warp_render(planar: number, channels: number, frames: number, sampleRate: number, speed: number, semitones: number, voice: number): number;
+  micfx_warp_output(channel: number): number;
+  micfx_warp_free(): void;
+}
+
+/** A song's section, as Practice shows it. */
+export interface SongSection {
+  name: string;
+  kind: string;
+  letter: string;
+  colour: string;
+  start: number;
+  end: number;
+  bars: number;
+}
+
+/** Practice's lyrics on the song's melody: the lines (times in the song as it is), what to keep, and an .lrc. */
+export interface PracticeLyrics {
+  lines: { text: string; start: number; end: number; pinned: boolean; timed: boolean; words: (string | number)[] }[];
+  saved: string;
+  lrc: string;
 }
 
 /** A melody as the Practice view draws it: [start, end, pitch, phrase] per note, [start, end] per phrase. */
@@ -184,6 +210,58 @@ export class Analysis {
 
   scoreReport(): Record<string, unknown> {
     return JSON.parse(this.read(this.x.micfx_score_report())) as Record<string, unknown>;
+  }
+
+  /** Lyrics for the song set by scoreSong: pasted text or an .lrc, or (kept) what its folder kept. */
+  lyricsSet(text: string, kept = false): PracticeLyrics {
+    const bytes = new TextEncoder().encode(text);
+    const at = this.x.malloc(Math.max(1, bytes.length));
+    try {
+      new Uint8Array(this.x.memory.buffer, at, bytes.length).set(bytes);
+      return JSON.parse(this.read(this.x.micfx_lyrics_set(at, bytes.length, kept ? 1 : 0))) as PracticeLyrics;
+    } finally {
+      this.x.free(at);
+    }
+  }
+
+  /** Places the lines again (all: the ones moved by hand too). */
+  lyricsAlign(all: boolean): PracticeLyrics {
+    return JSON.parse(this.read(this.x.micfx_lyrics_align(all ? 1 : 0))) as PracticeLyrics;
+  }
+
+  /** Moves a line by `seconds`; it stays put from then on. */
+  lyricsNudge(index: number, seconds: number): PracticeLyrics {
+    return JSON.parse(this.read(this.x.micfx_lyrics_nudge(index, seconds))) as PracticeLyrics;
+  }
+
+  /** The song's sections (intro, verses, choruses...) from its audio, mono. */
+  sections(mono: Float32Array, sampleRate: number): SongSection[] {
+    const at = this.copyIn(mono);
+    try {
+      return JSON.parse(this.read(this.x.micfx_song_sections(at, mono.length, sampleRate))) as SongSection[];
+    } finally {
+      this.x.free(at);
+    }
+  }
+
+  /** Scores the song as it plays in another key and speed (the melody moved), from `songTime` on. */
+  scoreShift(semitones: number, speed: number, songTime: number): PracticeSong {
+    return JSON.parse(this.read(this.x.micfx_score_shift(semitones, speed, songTime))) as PracticeSong;
+  }
+
+  /** The audio played `speed` times as fast and moved by `semitones` (the DAW's Warp; `voice` keeps a voice's formants). */
+  warp(channels: Float32Array[], sampleRate: number, speed: number, semitones: number, voice: boolean): Float32Array[] {
+    const frames = channels[0]?.length ?? 0;
+    const at = this.x.malloc(Math.max(1, frames * channels.length) * 4);
+    if (!at) throw new Error("Not enough memory to change the song's key or speed.");
+    try {
+      channels.forEach((channel, ch) => new Float32Array(this.x.memory.buffer, at + ch * frames * 4, frames).set(channel));
+      const length = this.x.micfx_warp_render(at, channels.length, frames, sampleRate, speed, semitones, voice ? 1 : 0);
+      return channels.map((_, ch) => new Float32Array(this.x.memory.buffer, this.x.micfx_warp_output(ch), length).slice());
+    } finally {
+      this.x.free(at);
+      this.x.micfx_warp_free();
+    }
   }
 
   private copyIn(samples: Float32Array): number {

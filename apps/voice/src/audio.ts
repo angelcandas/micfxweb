@@ -250,6 +250,11 @@ export class LiveAudio {
   }
 
   /** The raw mic in chunks of about 0.1 s (onMicChunk), for a sound check. */
+  /** Loops from..to seconds on the tracks (Practice); without them, the loop ends. */
+  loop(from?: number, to?: number): void {
+    this.post({ type: "loop", from, to });
+  }
+
   /** The Practice view's pitch tap: meters carry the mic's pitch readings while on. */
   pitch(on: boolean): void {
     this.post({ type: "pitch", on });

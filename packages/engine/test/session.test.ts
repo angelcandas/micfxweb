@@ -36,6 +36,22 @@ describe("session", () => {
     expect(session.position).toBe(BLOCK * 4);
   });
 
+  it("loops a region round and round, mid-block too", () => {
+    const session = new Session(RATE, () => {});
+    // A ramp: each frame's value is its place.
+    session.addTrack(1, [Float32Array.from({ length: RATE }, (_, i) => i / RATE)], 0);
+    session.setLoop(100 / RATE, 300 / RATE);
+    session.transport("seek", 250 / RATE);
+    session.transport("play");
+    const out = run(session, 2);
+    expect(out[0]).toBeCloseTo(250 / RATE, 6);
+    expect(out[49]).toBeCloseTo(299 / RATE, 6);
+    expect(out[50]).toBeCloseTo(100 / RATE, 6); // back to the start
+    expect(session.position).toBe(106); // 250..300, 100..300, then 6 more
+    session.setLoop();
+    expect(session.loop).toBeUndefined();
+  });
+
   it("mutes, removes, seeks and stops", () => {
     const session = new Session(RATE, () => {});
     session.addTrack(7, [constant(RATE, 0.3), constant(RATE, -0.3)], 0);
