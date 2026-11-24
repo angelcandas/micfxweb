@@ -36,7 +36,7 @@ test("the views pass axe", async ({ page }) => {
 
 test("a knob turns from the keyboard", async ({ page }) => {
   await begin(page);
-  const knob = page.getByRole("slider", { name: /cutoff/i }).first();
+  const knob = page.getByRole("slider", { name: /size/i }).first();
   await knob.focus();
   const before = await knob.getAttribute("aria-valuenow");
   await page.keyboard.press("ArrowUp");

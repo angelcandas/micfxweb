@@ -187,6 +187,22 @@ export class EngineRuntime {
   }
 }
 
+/**
+ * The web's starting sound, over the desktop's defaults: only a small reverb. The desktop
+ * starts with the high-pass, gate and compressor on too; on the web the plain voice with a
+ * little room is the first thing heard, and nothing in it adds delay. Noise reduction stays
+ * off. Factory presets still bring their own full sound.
+ */
+export const WEB_DEFAULTS: Readonly<Record<string, number>> = {
+  hpfOn: 0,
+  gateOn: 0,
+  compOn: 0,
+  denoiseOn: 0,
+  reverbOn: 1,
+  reverbMix: 15,
+  reverbSize: 35,
+};
+
 /** MicFX Live mode's voice path: mic -> input gain -> effects -> output gain -> limiter. */
 export class LiveEngine {
   private handle: number;
@@ -195,6 +211,11 @@ export class LiveEngine {
   constructor(private readonly x: Exports, sampleRate: number, maxBlockSize: number) {
     this.maxBlockSize = maxBlockSize;
     this.handle = x.micfx_create(sampleRate, maxBlockSize);
+    this.applyWebDefaults();
+  }
+
+  private applyWebDefaults() {
+    for (const [id, value] of Object.entries(WEB_DEFAULTS)) this.setValue(id, value);
   }
 
   /** The engine's mono input buffer. Re-read after any call that may grow memory. */
@@ -233,7 +254,9 @@ export class LiveEngine {
 
   /** The desktop parameters, in the desktop's order. */
   parameterInfo(): Record<string, ParameterInfo> {
-    return JSON.parse(this.readResult(this.x.micfx_parameter_info(this.handle))) as Record<string, ParameterInfo>;
+    const info = JSON.parse(this.readResult(this.x.micfx_parameter_info(this.handle))) as Record<string, ParameterInfo>;
+    for (const [id, value] of Object.entries(WEB_DEFAULTS)) if (info[id]) info[id].default = value;
+    return info;
   }
 
   /** The desktop's factory voice presets, in program order. */
@@ -249,6 +272,7 @@ export class LiveEngine {
   /** Every value back to its default, except the input gain (it belongs to the mic). */
   resetValues(): void {
     this.x.micfx_reset_values(this.handle);
+    this.applyWebDefaults();
   }
 
   valueInfo(): ValueInfo[] {
@@ -257,7 +281,7 @@ export class LiveEngine {
       .filter(Boolean)
       .map((line) => {
         const [id = "", value = "0", isSwitch = "0", module = ""] = line.split("=");
-        return { id, defaultValue: Number(value), isSwitch: isSwitch === "1", module };
+        return { id, defaultValue: id in WEB_DEFAULTS ? WEB_DEFAULTS[id]! : Number(value), isSwitch: isSwitch === "1", module };
       });
   }
 

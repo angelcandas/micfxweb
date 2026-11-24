@@ -19,6 +19,7 @@
 
 #include <emscripten/emscripten.h>
 #include <emscripten/wasmfs.h>
+#include <emscripten/threading.h>
 
 #include "PluginProcessor.h"
 #include "DawBridge.h"
@@ -90,6 +91,8 @@ public:
     std::atomic<int> underruns { 0 };
     std::atomic<double> loadAverage { 0.0 };
     std::atomic<bool> paused { false };
+    std::atomic<int> inputSkips { 0 };      // times stale input frames were dropped
+    static constexpr int maxInputBacklog = 1; // blocks of mic the engine may lag behind
 
     // MIDI from the page (Web MIDI): queued here, handed to the next block.
     void addMidi (const juce::MidiMessage& m)
@@ -103,9 +106,21 @@ private:
     {
         while (! threadShouldExit())
         {
-            if (paused.load() || output.space() < blockSize || output.available() >= targetFrames.load())
+            if (paused.load())
             {
-                juce::Thread::sleep (1);
+                juce::Thread::sleep (5);
+                continue;
+            }
+
+            if (output.space() < blockSize || output.available() >= targetFrames.load())
+            {
+                // Wait for the worklet to take a block: it wakes this thread (Atomics.notify on
+                // the read position) the moment it reads, so the engine starts the next block
+                // at once instead of up to a millisecond later. That margin is what lets the
+                // lead (and the monitoring delay) be small. The timeout covers a missed wake.
+                const auto seen = output.read.load();
+                if (output.available() >= targetFrames.load() || output.space() < blockSize)
+                    emscripten_futex_wait (reinterpret_cast<volatile void*> (&output.read), (uint32_t) seen, 2.0);
                 continue;
             }
 
@@ -130,7 +145,17 @@ private:
                 for (int ch = 0; ch < inChannels; ++ch)
                     buffer.setSample (ch, i, input.data[frame + (size_t) ch]);
             }
-            input.read.store (start + blockSize);
+            // The input never lags more than a block behind: frames that piled up (a worklet
+            // block the engine couldn't answer in time) would otherwise stay in the ring for
+            // good and delay everything you hear from the mic, a little more each time.
+            auto next = start + blockSize;
+            const auto written = input.write.load();
+            if (written - next > maxInputBacklog * blockSize)
+            {
+                next = written - blockSize;
+                inputSkips.fetch_add (1);
+            }
+            input.read.store (next);
         }
         else if (input.available() > 0 && input.available() < blockSize)
         {

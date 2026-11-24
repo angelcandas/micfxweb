@@ -217,3 +217,7 @@ body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-moti
 .web-part { display: inline-flex; align-items: center; gap: 8px; color: var(--muted, #8f98ad); font-size: 13px; }
 .web-part[hidden] { display: none; }
 .web-split-time { color: var(--muted, #8f98ad); font-size: 12px; white-space: nowrap; }
+
+/* Audio settings: the low latency switch and the delay's parts. */
+.web-switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.web-latency-parts { color: var(--muted); font-size: 12px; }

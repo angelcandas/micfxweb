@@ -166,11 +166,22 @@ describe("LiveEngine (desktop DSP in wasm)", () => {
     expect(ids[0]).toBe("inputGain");
     expect(ids.length).toBeGreaterThan(250);
     expect(info.tuneKey?.choices).toHaveLength(12);
-    expect(info.hpfOn).toMatchObject({ bool: true, default: 1 });
+    // The web starts from a plain voice with a small reverb (WEB_DEFAULTS).
+    expect(info.hpfOn).toMatchObject({ bool: true, default: 0 });
+    expect(info.compOn?.default).toBe(0);
+    expect(info.gateOn?.default).toBe(0);
+    expect(info.denoiseOn?.default).toBe(0);
+    expect(info.reverbOn?.default).toBe(1);
+    expect(info.reverbMix?.default).toBe(15);
     expect(info.tuneSpeed).toMatchObject({ min: 0, max: 200, default: 20, label: "ms" });
     expect(info.tuneSpeed!.skew).not.toBe(1); // centred at 40 ms, like the desktop knob
     // The engine starts from these defaults.
     for (const id of ["hpfOn", "compOn", "reverbOn", "tuneSpeed", "reverbMix"]) expect(engine.getValue(id)).toBeCloseTo(info[id]!.default);
+    // and goes back to them on a reset
+    engine.setValue("compOn", 1);
+    engine.resetValues();
+    expect(engine.getValue("compOn")).toBe(0);
+    expect(engine.getValue("reverbMix")).toBeCloseTo(15);
     engine.dispose();
   });
 

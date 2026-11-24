@@ -224,6 +224,52 @@ test("records from several inputs: two devices give tracks more inputs", async (
   await expect.poll(async () => JSON.stringify(await session(page))).toContain(names[1]!);
 });
 
+test("low latency renders just ahead of what you hear, and Audio settings shows the delay", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page);
+  await page.mouse.click(900, 450); // a click starts the sound
+  type Probe = { micfxDaw: { lead: number; measuredLead: number; underruns: number; context: AudioContext; latencyParts(): { lead: number; backlog: number } | undefined } };
+  const reading = () => page.evaluate(() => {
+    const e = (window as unknown as Probe).micfxDaw;
+    return { lead: e.lead, measured: e.measuredLead, rate: e.context.sampleRate, underruns: e.underruns };
+  });
+  // Low latency is the default: the engine starts 256 frames ahead (it may have backed off
+  // a block or two on a busy test machine), measured by the worklet as what's buffered.
+  await expect.poll(async () => (await reading()).measured, { timeout: 10_000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(1500);
+  const low = await reading();
+  await page.waitForTimeout(3000);
+  const lowLater = await reading();
+  console.log(`underruns at the small lead over 3 s: ${lowLater.underruns - low.underruns}, lead ${lowLater.lead}`);
+  expect(low.lead).toBeLessThanOrEqual(512);
+  expect(low.measured).toBeLessThanOrEqual(low.lead + 1);
+
+  await page.locator(".web-saved").click();
+  await page.getByRole("menuitem", { name: /Audio settings/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Audio settings" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".web-audio-delay")).toContainText(/About \d+ ms from the mic to your ears/);
+  await expect(dialog.locator(".web-audio-parts")).toContainText("Engine lead");
+  await expect(dialog.getByLabel("Sample rate")).toHaveValue("0");
+  await page.screenshot({ path: "test-results/daw-audio-settings.png" });
+
+  // Off: the safe 1024-frame lead, 21 ms at 48 kHz.
+  const box = dialog.getByLabel("Low latency");
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  await expect.poll(async () => (await reading()).measured, { timeout: 10_000 }).toBeGreaterThan(900);
+  const safe = await reading();
+  console.log(`DAW engine lead: low latency ${Math.round(low.measured)} frames (${((low.measured / low.rate) * 1000).toFixed(1)} ms), ` +
+    `safe ${Math.round(safe.measured)} frames (${((safe.measured / safe.rate) * 1000).toFixed(1)} ms) at ${low.rate} Hz, underruns ${safe.underruns}`);
+  await box.check();
+  await expect.poll(async () => (await reading()).measured, { timeout: 10_000 }).toBeLessThan(600);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(JSON.parse(await page.evaluate(() => localStorage.getItem("micfx.audio.prefs") ?? "{}"))).toMatchObject({ lowLatency: true, rate: 0 });
+  expect(errors).toEqual([]);
+});
+
 // A stand-in MicFX Voice on another origin, speaking the hand-off protocol (packages/handoff).
 const VOICE_STUB = `<!doctype html><meta charset="utf-8"><title>Voice stub</title><body><script>
   window.received = null;

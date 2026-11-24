@@ -1,5 +1,6 @@
 // The audio side of MicFX Voice: the mic, the AudioContext and the engine's worklet.
 import { type RoundTrip, measureRoundTrip } from "@micfx/engine/calibration";
+import { inputLatencyMs, micConstraints, openContext, readAudioPrefs } from "@micfx/engine/audio-prefs";
 import wasmUrl from "@micfx/engine/engine.wasm?url";
 import workletUrl from "@micfx/engine/worklet?worker&url";
 import type { FromWorklet, ToWorklet, TransportState, Values } from "@micfx/engine/messages";
@@ -98,21 +99,15 @@ export class LiveAudio {
   async start(deviceId?: string): Promise<LiveAudioInfo> {
     await this.stop();
     this.inputId = deviceId ?? "";
-    const context = new AudioContext({ latencyHint: "interactive" });
+    // The rate and the low latency switch (Audio settings).
+    const prefs = readAudioPrefs();
+    const context = openContext(prefs);
     this.context = context;
     const [module] = await Promise.all([compileEngine(), context.audioWorklet.addModule(workletUrl)]);
 
     // The browser's own voice processing would fight the effects and add latency.
     this.stream = await navigator.mediaDevices
-      .getUserMedia({
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: { ideal: 1 },
-        },
-      })
+      .getUserMedia({ audio: micConstraints(prefs, deviceId, 1) })
       .catch(async (error: unknown) => {
         // No mic (blocked, unplugged): no half-started sound either.
         await this.stop();
@@ -255,6 +250,19 @@ export class LiveAudio {
     return this.context?.sampleRate;
   }
 
+  /** The parts of the delay (ms), for Audio settings; undefined when stopped. */
+  latencyParts(): { input?: number; base: number; output: number; effects: number; rate: number } | undefined {
+    const context = this.context;
+    if (!context) return undefined;
+    return {
+      input: inputLatencyMs(this.stream),
+      base: (context.baseLatency || 128 / context.sampleRate) * 1000,
+      output: (context.outputLatency || 0) * 1000,
+      effects: (this.latencySamples / context.sampleRate) * 1000,
+      rate: context.sampleRate,
+    };
+  }
+
   /** The mic's name, when the browser tells it. */
   get deviceLabel(): string {
     return this.stream?.getAudioTracks()[0]?.label ?? "";
@@ -281,7 +289,9 @@ export class LiveAudio {
     if (measured !== undefined) return (measured + effects) * 1000;
     const base = context.baseLatency || 128 / context.sampleRate;
     const output = context.outputLatency || 0;
-    return (base * 2 + output + effects) * 1000;
+    // The capture side: what the mic track reports, else about the output's buffer.
+    const input = (inputLatencyMs(this.stream) ?? base * 1000) / 1000;
+    return (input + base + output + effects) * 1000;
   }
 
   /** This mic, output and rate together: what a measured round trip belongs to. */

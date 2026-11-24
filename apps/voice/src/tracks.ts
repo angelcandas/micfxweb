@@ -413,10 +413,11 @@ async function wavRate(wav: Blob): Promise<number> {
 }
 
 /** 24-bit PCM WAV. */
-export function encodeWav(channels: Float32Array[], rate: number): Blob {
+export function encodeWav(channels: Float32Array[], rate: number, bits: 16 | 24 | 32 = 24): Blob {
   const frames = channels[0]?.length ?? 0;
   const count = channels.length;
-  const bytes = frames * count * 3;
+  const width = bits / 8;
+  const bytes = frames * count * width;
   const view = new DataView(new ArrayBuffer(44 + bytes));
   const text = (at: number, value: string) => [...value].forEach((ch, i) => view.setUint8(at + i, ch.charCodeAt(0)));
   text(0, "RIFF");
@@ -424,22 +425,29 @@ export function encodeWav(channels: Float32Array[], rate: number): Blob {
   text(8, "WAVE");
   text(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
+  view.setUint16(20, bits === 32 ? 3 : 1, true); // 32-bit is float, as the browser has it
   view.setUint16(22, count, true);
   view.setUint32(24, rate, true);
-  view.setUint32(28, rate * count * 3, true);
-  view.setUint16(32, count * 3, true);
-  view.setUint16(34, 24, true);
+  view.setUint32(28, rate * count * width, true);
+  view.setUint16(32, count * width, true);
+  view.setUint16(34, bits, true);
   text(36, "data");
   view.setUint32(40, bytes, true);
   let at = 44;
   for (let i = 0; i < frames; ++i) {
     for (const channel of channels) {
-      const value = Math.round(Math.max(-1, Math.min(1, channel[i]!)) * 8388607);
-      view.setUint8(at, value & 0xff);
-      view.setUint8(at + 1, (value >> 8) & 0xff);
-      view.setUint8(at + 2, (value >> 16) & 0xff);
-      at += 3;
+      const sample = channel[i]!;
+      if (bits === 32) {
+        view.setFloat32(at, Number.isFinite(sample) ? sample : 0, true);
+      } else if (bits === 16) {
+        view.setInt16(at, Math.round(Math.max(-1, Math.min(1, sample)) * 32767), true);
+      } else {
+        const value = Math.round(Math.max(-1, Math.min(1, sample)) * 8388607);
+        view.setUint8(at, value & 0xff);
+        view.setUint8(at + 1, (value >> 8) & 0xff);
+        view.setUint8(at + 2, (value >> 16) & 0xff);
+      }
+      at += width;
     }
   }
   return new Blob([view.buffer], { type: "audio/wav" });
