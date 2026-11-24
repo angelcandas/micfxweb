@@ -33,4 +33,8 @@ jobs:
         run: pnpm --filter @micfx/engine build
       - run: pnpm typecheck
       - run: pnpm build
+      - name: Install Chromium for the browser tests
+        run: pnpm --filter @micfx/voice exec playwright install --with-deps chromium
       - run: pnpm test
+        env:
+          CI: true
