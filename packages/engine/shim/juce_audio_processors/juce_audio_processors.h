@@ -47,7 +47,14 @@ public:
         copy.label = newLabel;
         return copy;
     }
+    AudioParameterFloatAttributes withStringFromValueFunction (std::function<String (float, int)> f) const
+    {
+        auto copy = *this;
+        copy.toText = std::move (f);
+        return copy;
+    }
     String label;
+    std::function<String (float, int)> toText;
 };
 
 class AudioProcessorParameter
@@ -57,6 +64,10 @@ public:
     virtual float getValue() const = 0;
     virtual void setValue (float newValue) = 0;
     virtual float getDefaultValue() const = 0;
+    virtual String getName (int maximumStringLength) const = 0;
+    virtual String getText (float normalisedValue, int) const { return String (normalisedValue, 2); }
+    String getCurrentValueAsText() const { return getText (getValue(), 1024); }
+    virtual bool isAutomatable() const { return true; }
     void setValueNotifyingHost (float newValue) { setValue (newValue); }
     void beginChangeGesture() {}
     void endChangeGesture() {}
@@ -71,7 +82,7 @@ public:
           defaultValue (range.convertTo0to1 (range.snapToLegalValue (defaultReal))), value (defaultValue) {}
 
     const String& getParameterID() const noexcept                   { return id; }
-    String getName (int maxLength = 1024) const                       { return name.substring (0, maxLength); }
+    String getName (int maxLength = 1024) const override              { return name.substring (0, maxLength); }
     String getLabel() const                                           { return label; }
     const NormalisableRange<float>& getNormalisableRange() const      { return range; }
 
@@ -99,7 +110,14 @@ class AudioParameterFloat : public RangedAudioParameter
 public:
     AudioParameterFloat (const ParameterID& parameterId, const String& parameterName, NormalisableRange<float> r,
                          float defaultReal, const AudioParameterFloatAttributes& attributes = {})
-        : RangedAudioParameter (parameterId, parameterName, r, defaultReal, attributes.label) {}
+        : RangedAudioParameter (parameterId, parameterName, r, defaultReal, attributes.label), toText (attributes.toText) {}
+
+    String getText (float normalised, int maxLength) const override
+    {
+        const auto real = convertFrom0to1 (normalised);
+        return toText ? toText (real, maxLength) : String (real, 2);
+    }
+    std::function<String (float, int)> toText;
 
     float get() const noexcept { return getReal(); }
     operator float() const noexcept { return get(); }
@@ -112,6 +130,7 @@ public:
         : RangedAudioParameter (parameterId, parameterName, { 0.0f, 1.0f, 1.0f }, defaultOn ? 1.0f : 0.0f, {}) {}
 
     bool get() const noexcept { return getValue() >= 0.5f; }
+    String getText (float normalised, int) const override { return normalised >= 0.5f ? "On" : "Off"; }
     operator bool() const noexcept { return get(); }
 };
 
@@ -123,6 +142,7 @@ public:
           choices (c) {}
 
     int getIndex() const noexcept { return roundToInt (getReal()); }
+    String getText (float normalised, int) const override { return choices[roundToInt (convertFrom0to1 (normalised))]; }
     operator int() const noexcept { return getIndex(); }
 
     const StringArray choices;
@@ -171,12 +191,34 @@ private:
 
 class AudioProcessor;
 
+class AudioProcessorListener
+{
+public:
+    struct ChangeDetails
+    {
+        ChangeDetails withLatencyChanged (bool b) const noexcept        { auto c = *this; c.latencyChanged = b; return c; }
+        ChangeDetails withParameterInfoChanged (bool b) const noexcept  { auto c = *this; c.parameterInfoChanged = b; return c; }
+        ChangeDetails withProgramChanged (bool b) const noexcept        { auto c = *this; c.programChanged = b; return c; }
+        ChangeDetails withNonParameterStateChanged (bool b) const noexcept { auto c = *this; c.nonParameterStateChanged = b; return c; }
+        bool latencyChanged = false, parameterInfoChanged = false, programChanged = false, nonParameterStateChanged = false;
+    };
+
+    virtual ~AudioProcessorListener() = default;
+    virtual void audioProcessorParameterChanged (AudioProcessor*, int parameterIndex, float newValue) = 0;
+    virtual void audioProcessorChanged (AudioProcessor*, const ChangeDetails&) = 0;
+    virtual void audioProcessorParameterChangeGestureBegin (AudioProcessor*, int) {}
+    virtual void audioProcessorParameterChangeGestureEnd (AudioProcessor*, int) {}
+};
+
 /** Never made on the web: the page draws the instruments' windows. */
 class AudioProcessorEditor
 {
 public:
     explicit AudioProcessorEditor (AudioProcessor&) {}
     virtual ~AudioProcessorEditor() = default;
+    int getWidth() const noexcept     { return 400; }
+    int getHeight() const noexcept    { return 300; }
+    bool isResizable() const noexcept { return false; }
 };
 
 class AudioProcessor
@@ -309,7 +351,18 @@ public:
     const Array<AudioProcessorParameter*>& getParameters() const noexcept { return parameterList; }
 
     AudioProcessorEditor* getActiveEditor() const noexcept { return nullptr; }
-    void updateHostDisplay() {}
+    AudioProcessorEditor* createEditorAndMakeActive() { return createEditor(); }
+
+    enum WrapperType { wrapperType_Undefined = 0, wrapperType_VST, wrapperType_VST3, wrapperType_AudioUnit,
+                       wrapperType_AudioUnitv3, wrapperType_AAX, wrapperType_Standalone, wrapperType_Unity,
+                       wrapperType_LV2 };
+    // The web DAW is the standalone app.
+    const WrapperType wrapperType = wrapperType_Standalone;
+    using ChangeDetails = AudioProcessorListener::ChangeDetails;
+    void updateHostDisplay (const ChangeDetails& = {}) {}
+    // Only plug-ins report to listeners, and the web loads none: kept for the names.
+    void addListener (AudioProcessorListener*) {}
+    void removeListener (AudioProcessorListener*) {}
 
     static void copyXmlToBinary (const XmlElement& xml, MemoryBlock& destData)
     {
@@ -479,6 +532,56 @@ public:
         fillInPluginDescription (description);
         return description;
     }
+};
+
+/** No formats on the web: nothing to scan or load. */
+class AudioPluginFormat
+{
+public:
+    virtual ~AudioPluginFormat() = default;
+    virtual String getName() const = 0;
+    virtual FileSearchPath getDefaultLocationsToSearch() { return {}; }
+    virtual bool canScanForPlugins() const { return false; }
+};
+
+class AudioPluginFormatManager
+{
+public:
+    void addDefaultFormats() {}
+    int getNumFormats() const noexcept { return 0; }
+    AudioPluginFormat* getFormat (int) const noexcept { return nullptr; }
+    Array<AudioPluginFormat*> getFormats() const { return {}; }
+    std::unique_ptr<AudioPluginInstance> createPluginInstance (const PluginDescription&, double, int, String& error) const
+    {
+        error = "Plug-ins can't load in a browser";
+        return {};
+    }
+};
+
+inline void addDefaultFormatsToManager (AudioPluginFormatManager&) {}
+
+class KnownPluginList;
+
+/** Scans nothing: there are no plug-in files in a browser. */
+class PluginDirectoryScanner
+{
+public:
+    PluginDirectoryScanner (KnownPluginList&, AudioPluginFormat&, FileSearchPath, bool, const File&, bool = false) {}
+    bool scanNextFile (bool, String&) { return false; }
+    float getProgress() const noexcept { return 1.0f; }
+    StringArray getFailedFiles() const { return {}; }
+    String getNextPluginFileThatWillBeScanned() const { return {}; }
+};
+
+class KnownPluginList
+{
+public:
+    Array<PluginDescription> getTypes() const { return {}; }
+    int getNumTypes() const noexcept { return 0; }
+    void clear() {}
+    std::unique_ptr<XmlElement> createXml() const { return std::make_unique<XmlElement> ("KNOWNPLUGINS"); }
+    void recreateFromXml (const XmlElement&) {}
+    std::unique_ptr<PluginDescription> getTypeForIdentifierString (const String&) const { return {}; }
 };
 #endif
 } // namespace juce
