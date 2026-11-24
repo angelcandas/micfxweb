@@ -11,6 +11,7 @@ import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
 import { Tracks } from "./tracks";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
+import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -18,6 +19,7 @@ const METER_IDLE_MS = 250;
 const SESSION_KEY = "micfx.session";
 const SESSION_SAVE_MS = 400;
 const RECORD_DRY_PREF = "micfx.record.dry";
+const MIDI_KEY = "micfx.midi";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -99,6 +101,45 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   history.onChange = () => backend?.emit("liveHistory", describeHistory());
   const scenes = new Scenes(access);
   scenes.onChange = () => saveSoon();
+
+  // MIDI learn over Web MIDI. The mappings belong to the app, not the sound (as on the desktop).
+  const midiMap = new MidiMap(access);
+  const describeMidi = () => ({ mappings: midiMap.describe(), learning: midiMap.learning, last: midiMap.lastEvent });
+  try {
+    midiMap.setMappings(JSON.parse(storage()?.getItem(MIDI_KEY) ?? "[]") as Mapping[], false);
+  } catch {
+    // a broken entry: no mappings
+  }
+  midiMap.onMappingsChanged = (list) => {
+    try {
+      storage()?.setItem(MIDI_KEY, JSON.stringify(list));
+    } catch {
+      // not kept
+    }
+  };
+  midiMap.onLearned = (mapping) =>
+    backend?.emit("midiLearned", { target: mapping.target, name: midiMap.describe().find((m) => m.target === mapping.target)?.name ?? "", midi: describeMidi() });
+  midiMap.onPresetStep = (delta) => {
+    const count = presets.length;
+    if (count) functions.loadPreset!((((currentPreset + delta) % count) + count) % count);
+  };
+  midiMap.onMuteToggle = () => {
+    muted = !muted;
+    audio.set({ outputMuted: muted ? 1 : 0 });
+  };
+  midiMap.onScene = (action) => {
+    if (action === "scene.next") scenes.handle("step", { delta: 1 });
+    else if (action === "scene.previous") scenes.handle("step", { delta: -1 });
+    else scenes.handle("recall", { index: Number(action.slice("scene.".length)) - 1 });
+  };
+  midiMap.onAction = (action) => backend?.emit("midiAction", action);
+  let midiConnected: Promise<boolean> | undefined;
+  const connectMidiOnce = () => (midiConnected ??= connectMidi((data) => midiMap.receive(data)).then((ok) => {
+    if (!ok) midiConnected = undefined; // ask again next time
+    return ok;
+  }));
+  // Allowed on an earlier visit: listen from the start, so mapped pedals just work.
+  if (midiMap.getMappings().length) void midiAlreadyAllowed().then((yes) => yes && connectMidiOnce());
 
   /** Every parameter, as the shadow engine has them. */
   const allValues = () => Object.fromEntries(ids.map((id) => [id, shadow.getValue(id) ?? parameters[id]!.default]));
@@ -202,7 +243,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     voices: (status.voices as number[]) ?? [],
     preset: currentPreset,
     fx: (status.fx as Record<string, unknown>) ?? {},
-    midi: { count: 0, last: "", learning: "" },
+    midi: { count: midiMap.eventCount, last: midiMap.lastEvent, learning: midiMap.learning },
     muted,
     // While a take starts, the worklet may not have said so yet: 0 until it does.
     recording: recording && audio.running ? Math.max(0, lastMeters.recording ?? 0) : -1,
@@ -362,7 +403,22 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     scenes: (action = "list", options?: Record<string, unknown>) => scenes.handle(String(action), options ?? {}),
     setlist: () => null,
     library,
-    midi: () => null,
+    midi: async (action = "list", options?: { target?: string }) => {
+      const target = String(options?.target ?? "");
+      if (action === "learn" && target) {
+        // Picking a control is a click: the browser may ask to allow MIDI devices.
+        const ok = await connectMidiOnce();
+        if (!ok) {
+          backend?.emit("trackError", "This browser can't use MIDI devices, or MIDI was blocked. Chrome and Edge have Web MIDI.");
+          return describeMidi();
+        }
+        midiMap.learning = target;
+      }
+      if (action === "cancel") midiMap.learning = "";
+      if (action === "remove") midiMap.removeTarget(target);
+      if (action === "clear") midiMap.setMappings([]);
+      return describeMidi();
+    },
     capture: () => null,
     computerAudio: () => null,
     liveInstruments: () => null,

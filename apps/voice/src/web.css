@@ -5,7 +5,6 @@ body[data-platform="web"] :is(
   .live-tracks,
   .loop-toggle,            /* looper and instruments */
   .practice-toggle,        /* Practice */
-  .midi-button,            /* MIDI learn (Web MIDI) */
   .record-change,          /* takes stay in the browser; "Show" downloads them */
   .capture,
   .computer-audio,         /* the computer's own sound */
