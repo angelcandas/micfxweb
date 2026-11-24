@@ -1,0 +1,38 @@
+/* The desktop UI as MicFX DAW: Live mode lives in MicFX Voice, so its switch is hidden. */
+body[data-web-app="daw"] .topbar .mode-switch { display: none !important; }
+
+.web-source { color: inherit; text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.25); text-underline-offset: 2px; }
+.web-source:hover { color: var(--text, #e9ecf4); }
+
+/* The file chooser over the browser's storage (chooser.ts). */
+.web-dialog-backdrop { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: rgba(5, 6, 10, 0.6); }
+.web-dialog {
+  width: min(560px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 32px)); display: flex; flex-direction: column; gap: 10px;
+  padding: 16px; box-sizing: border-box; border-radius: 10px; background: var(--panel, #171a22); color: var(--text, #e9ecf4);
+  border: 1px solid var(--line, #2a2f3c); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); font: 13px/1.4 var(--font, system-ui, sans-serif);
+}
+.web-dialog-title { margin: 0; font-size: 15px; font-weight: 600; }
+.web-dialog-where { color: var(--muted, #8791a7); display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.web-dialog-crumb { background: none; border: 0; color: inherit; padding: 2px 4px; border-radius: 4px; cursor: pointer; font: inherit; }
+.web-dialog-crumb:hover { color: var(--text, #e9ecf4); background: rgba(255, 255, 255, 0.06); }
+.web-dialog-list { flex: 1; min-height: 160px; overflow: auto; border: 1px solid var(--line, #2a2f3c); border-radius: 6px; background: rgba(0, 0, 0, 0.18); }
+.web-dialog-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.web-dialog-row:hover { background: rgba(255, 255, 255, 0.05); }
+.web-dialog-row.is-selected { background: var(--accent-soft, rgba(110, 140, 255, 0.22)); }
+.web-dialog-file { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.web-dialog-size { color: var(--muted, #8791a7); font-variant-numeric: tabular-nums; }
+.web-dialog-empty { padding: 24px; color: var(--muted, #8791a7); text-align: center; }
+.web-dialog-name { display: flex; align-items: center; gap: 8px; }
+.web-dialog-name input { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line, #2a2f3c); background: rgba(0, 0, 0, 0.25); color: inherit; font: inherit; }
+.web-dialog-note { margin: 0; color: var(--muted, #8791a7); font-size: 12px; }
+.web-dialog-buttons { display: flex; gap: 8px; align-items: center; }
+.web-dialog-gap { flex: 1; }
+.web-dialog-buttons button:not(.web-dialog-crumb) {
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line, #2a2f3c); background: rgba(255, 255, 255, 0.05);
+  color: inherit; font: inherit; cursor: pointer;
+}
+.web-dialog-buttons .web-dialog-primary { background: var(--accent, #6e8cff); border-color: transparent; color: #0b0d12; font-weight: 600; }
+@media (max-width: 480px) { .web-dialog-buttons { flex-wrap: wrap; } }

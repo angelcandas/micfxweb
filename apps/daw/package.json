@@ -1,0 +1,21 @@
+{
+  "name": "@micfx/daw",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/sync.mjs && vite",
+    "build": "node scripts/sync.mjs && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p .",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.8"
+  },
+  "dependencies": {
+    "@micfx/bridge": "workspace:*"
+  }
+}

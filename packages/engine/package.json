@@ -15,7 +15,8 @@
   "scripts": {
     "build": "bash build.sh",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:daw": "bash build-daw.sh"
   },
   "devDependencies": {
     "@types/node": "22.19.1",

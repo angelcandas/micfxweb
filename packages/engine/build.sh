@@ -36,6 +36,7 @@ flags=(
   -std=c++20 -O2 -msimd128
   -I"$juce" -I"$here/shim" -I"$desktop/src" -I"$desktop/src/dsp" -I"$desktop/src/analysis"
   -DNDEBUG=1 -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=0
+  -DJUCE_LITTLE_ENDIAN=1 # JUCE sets no byte order for WebAssembly (it is little-endian)
   -DJUCE_MODULE_AVAILABLE_juce_core=1 -DJUCE_MODULE_AVAILABLE_juce_audio_basics=1
   -DJUCE_MODULE_AVAILABLE_juce_audio_formats=1 -DJUCE_MODULE_AVAILABLE_juce_dsp=1
   -DJUCE_USE_CURL=0 -DJUCE_WEB_BROWSER=0 -DJUCE_USE_FLAC=0 -DJUCE_USE_OGGVORBIS=0

@@ -31,6 +31,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build the engine (desktop DSP to wasm)
         run: pnpm --filter @micfx/engine build
+      - name: Build the DAW engine (the desktop DAW to wasm, with threads)
+        run: pnpm --filter @micfx/engine build:daw
       - run: pnpm typecheck
       - run: pnpm build
       - name: Install Chromium for the browser tests
@@ -44,6 +46,13 @@ jobs:
         with:
           name: voice-dist
           path: apps/voice/dist
+          retention-days: 7
+      - name: Keep the built DAW app for the deploy
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: daw-dist
+          path: apps/daw/dist
           retention-days: 7
 
   # MicFX Voice on Cloudflare Pages, after the tests pass on main. Needs the repository
@@ -127,3 +136,84 @@ jobs:
             echo "::warning::$DOMAIN's zone isn't in this Cloudflare account: add a CNAME $DOMAIN -> $PROJECT.pages.dev where its DNS is"
           fi
           echo "::notice::MicFX Voice: https://$PROJECT.pages.dev and https://$DOMAIN"
+
+  # MicFX DAW on Cloudflare Pages, the same way: project micfxdaw, the variable DAW_DOMAIN or
+  # else micfxdaw.<the sobrinotech zone>. Its pages are served cross-origin isolated
+  # (apps/daw/public/_headers): the DAW engine runs on threads.
+  deploy-daw:
+    name: Deploy MicFX DAW
+    needs: web
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-daw
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT: micfxdaw
+      DOMAIN: ${{ vars.DAW_DOMAIN }}
+    steps:
+      - name: Check the Cloudflare secrets
+        id: secrets
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID aren't set: skipping the deploy (see docs/deploy.md)."
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secrets.outputs.ready
+        with:
+          name: daw-dist
+          path: dist
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready
+        with:
+          node-version: 22
+      - name: Create the Pages project (first deploy only)
+        if: steps.secrets.outputs.ready
+        run: npx --yes wrangler@4.160.0 pages project create "$PROJECT" --production-branch=main || echo "Project already exists"
+      - name: Upload
+        if: steps.secrets.outputs.ready
+        run: npx --yes wrangler@4.160.0 pages deploy dist --project-name="$PROJECT" --branch=main --commit-hash="$GITHUB_SHA"
+      - name: Attach the custom domain
+        if: steps.secrets.outputs.ready
+        run: |
+          cf() { curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" "$@"; }
+          echo "Live at https://$PROJECT.pages.dev"
+          # The domain: the DAW_DOMAIN variable, or micfxdaw.<the account's sobrinotech zone>.
+          if [ -z "$DOMAIN" ]; then
+            zones="$(cf "https://api.cloudflare.com/client/v4/zones?account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=50" \
+                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
+            echo "Zones this token sees: ${zones:-none (it may lack Zone: Read)}"
+            zone="$(printf '%s\n' "$zones" | grep -E '^sobrinotech\.' | head -n 1 || true)"
+            [ -n "$zone" ] && DOMAIN="$PROJECT.$zone"
+          fi
+          if [ -z "$DOMAIN" ]; then
+            echo "::notice::No sobrinotech zone found: set the DAW_DOMAIN variable (see docs/deploy.md). The app is on $PROJECT.pages.dev."
+            exit 0
+          fi
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
+          if cf "$api" | grep -q "\"name\":\"$DOMAIN\""; then
+            echo "$DOMAIN is already attached"
+          else
+            cf -X POST --data "{\"name\":\"$DOMAIN\"}" "$api" > /dev/null
+            echo "Attached $DOMAIN (Cloudflare adds the DNS record when the zone is on Cloudflare)"
+          fi
+          # The DNS record (the API doesn't add it as the dashboard does): a proxied CNAME to the Pages site.
+          zone_id="$(cf "https://api.cloudflare.com/client/v4/zones?name=${DOMAIN#*.}" | grep -o '"id":"[0-9a-f]\{32\}"' | head -n 1 | cut -d'"' -f4 || true)"
+          if [ -n "$zone_id" ]; then
+            records="https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records"
+            if cf "$records?name=$DOMAIN" | grep -q "\"name\":\"$DOMAIN\""; then
+              echo "The DNS record for $DOMAIN is there"
+            else
+              cf -X POST --data "{\"type\":\"CNAME\",\"name\":\"$DOMAIN\",\"content\":\"$PROJECT.pages.dev\",\"proxied\":true}" "$records" > /dev/null \
+                && echo "Added the DNS record $DOMAIN -> $PROJECT.pages.dev" \
+                || echo "::warning::Couldn't add the DNS record (the token needs Zone: DNS: Edit): add a CNAME $DOMAIN -> $PROJECT.pages.dev"
+            fi
+          else
+            echo "::warning::$DOMAIN's zone isn't in this Cloudflare account: add a CNAME $DOMAIN -> $PROJECT.pages.dev where its DNS is"
+          fi
+          echo "::notice::MicFX DAW: https://$PROJECT.pages.dev and https://$DOMAIN"

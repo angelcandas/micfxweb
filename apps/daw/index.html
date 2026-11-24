@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MicFX DAW: record, edit and mix songs in the browser.">
+  <title>MicFX DAW</title>
+  <meta name="theme-color" content="#0b0d12">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0d12; color: #e9ecf4; font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+    .boot { display: grid; place-content: center; height: 100%; color: #8791a7; text-align: center; gap: 8px; }
+  </style>
+</head>
+<body>
+  <div class="boot" role="status">Loading MicFX DAW…</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

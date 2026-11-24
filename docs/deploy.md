@@ -1,17 +1,19 @@
 # Deploying
 
 MicFX Voice is deployed to **Cloudflare Pages** by CI (`.github/workflows/ci.yml`, job
-"Deploy MicFX Voice") after every push to `main` that passes the tests. MicFX DAW will
-deploy the same way, to its own Pages project.
+"Deploy MicFX Voice") after every push to `main` that passes the tests. MicFX DAW
+deploys the same way (job "Deploy MicFX DAW") to its own Pages project.
 
 | App | Pages project | Domain |
 | --- | --- | --- |
 | MicFX Voice | `micfxvoice` | `micfxvoice.sobrinotech.<tld>` |
-| MicFX DAW | `micfxdaw` (later) | `micfxdaw.sobrinotech.<tld>` |
+| MicFX DAW | `micfxdaw` | `micfxdaw.sobrinotech.<tld>` |
 
-Everything is static. There is no server: settings, sounds and tracks stay in the
-visitor's browser (localStorage and IndexedDB). No COOP/COEP headers are needed, because
-the engine doesn't use SharedArrayBuffer.
+Everything is static. There is no server: settings, sounds, tracks and projects stay in the
+visitor's browser (localStorage, IndexedDB, and for the DAW the origin private file system).
+Voice needs no COOP/COEP headers (its engine doesn't use SharedArrayBuffer). The DAW does:
+its engine runs the desktop DAW on threads, so `apps/daw/public/_headers` serves every page
+with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.
 
 ## One-time setup
 
@@ -22,6 +24,7 @@ the engine doesn't use SharedArrayBuffer.
    - secret `CLOUDFLARE_ACCOUNT_ID`: the account ID (shown on the Cloudflare dashboard's
      overview, right column)
    - variable `VOICE_DOMAIN` (optional): for example `micfxvoice.sobrinotech.com`. Without it, the deploy uses `micfxvoice.<zone>` for a `sobrinotech.*` zone the token can see (Zone: Read), and adds its DNS record (Zone: DNS: Edit)
+   - variable `DAW_DOMAIN` (optional): the same for the DAW (default `micfxdaw.<zone>`)
 3. Re-run the CI workflow on `main`, or push to it.
 
 The first deploy creates the `micfxvoice` Pages project. It then attaches `VOICE_DOMAIN`.
