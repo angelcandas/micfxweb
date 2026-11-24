@@ -13,6 +13,9 @@ export interface WebHooks {
   applySound(values: Record<string, number>, order?: string[]): void;
   flush(): void;
   hold(): void;
+  latency(): { ms?: number; measured?: number; running: boolean };
+  calibrate(): Promise<{ seconds?: number; confidence: number }>;
+  forgetLatency(): void;
 }
 
 function html<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
@@ -75,6 +78,52 @@ export function addWebSettings(hooks: WebHooks) {
     parent.append(element);
     return element;
   };
+
+  // Latency calibration, in the desktop's Audio section.
+  const audioSection = [...body.querySelectorAll("h3")].find((h) => h.textContent === "Audio")?.parentElement;
+  if (audioSection) {
+    const latencyText = html("span", "setup-value web-latency");
+    const measure = button("Measure…", "Plays a few clicks and hears them back through the mic, to line takes and Practice up exactly on this device", async () => {
+      const ok = window.confirm(
+        "MicFX will play 8 clicks and listen for them.\n\nTake your headphones off and turn the speakers up a little, or hold a headphone cup against the microphone. Keep quiet for 4 seconds.",
+      );
+      if (!ok) return;
+      measure.disabled = true;
+      latencyText.textContent = "Listening…";
+      try {
+        const result = await hooks.calibrate();
+        if (result.seconds === undefined) latencyText.textContent = "Couldn't hear the clicks clearly: turn the speakers up, or hold the headphones to the mic, and try again.";
+        else {
+          showLatency(true);
+          toast(`Measured ${Math.round(result.seconds * 1000)} ms on this device: takes and Practice now line up with it.`);
+        }
+      } catch (error) {
+        latencyText.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        measure.disabled = false;
+        reset.hidden = hooks.latency().measured === undefined;
+      }
+    });
+    const reset = button("Use the estimate", "Forgets the measure on this device and goes back to what the browser reports", () => {
+      hooks.forgetLatency();
+      showLatency(true);
+    });
+    const showLatency = (_replace: boolean) => {
+      const { ms, measured, running } = hooks.latency();
+      reset.hidden = measured === undefined;
+      latencyText.textContent = !running
+        ? "Start the sound to see it"
+        : measured !== undefined
+          ? `${Math.round(ms ?? 0)} ms round trip (measured here)`
+          : `About ${Math.round(ms ?? 0)} ms round trip (estimated)`;
+    };
+    const line = row(audioSection, "Latency", latencyText, measure, reset);
+    audioSection.querySelector(".setup-note")?.before(line);
+    new MutationObserver(() => {
+      if (!backdrop.hidden) showLatency(true);
+    }).observe(backdrop, { attributes: true, attributeFilter: ["hidden"] });
+    showLatency(true);
+  }
 
   // The take's file, in the desktop's Recording section.
   const recording = [...body.querySelectorAll("h3")].find((h) => h.textContent === "Recording")?.parentElement;

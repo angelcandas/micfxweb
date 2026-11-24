@@ -51,7 +51,7 @@ test("the desktop Live UI runs on the web bridge", async ({ page }) => {
 test("parts the browser can't do yet are hidden", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".effect-item").first()).toBeVisible();
-  for (const selector of [".mode-switch", ".record-change", ".computer-audio"])
+  for (const selector of [".mode-switch", ".record-change"])
     await expect(page.locator(selector).first()).toBeHidden();
 });
 

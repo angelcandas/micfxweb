@@ -149,4 +149,40 @@ describe("session", () => {
     session.metronome.set({ on: false });
     expect(Math.max(...run(session, 400).map(Math.abs))).toBe(0);
   });
+
+  it("plays a live input (a tab) under the voice, stopped or playing, and keeps it beside the take", () => {
+    const chunks: TakeChunk[] = [];
+    const session = new Session(RATE, (chunk) => chunks.push(chunk));
+    const live = (): [Float32Array, Float32Array] => [constant(BLOCK, 0.2), constant(BLOCK, 0.3)];
+    const block = (voice: number) => {
+      const left = constant(BLOCK, voice);
+      const right = constant(BLOCK, voice);
+      session.process(left, right, constant(BLOCK, voice), BLOCK, live());
+      return [left[0]!, right[0]!];
+    };
+    expect(block(0.1)[0]).toBeCloseTo(0.1); // off: not heard
+    session.liveOn = true;
+    session.liveGain = 0.5;
+    const [l, r] = block(0.1);
+    expect(l).toBeCloseTo(0.2);
+    expect(r).toBeCloseTo(0.25);
+
+    session.startRecording(false);
+    for (let i = 0; i < 3; ++i) expect(block(0.1)[0]).toBeCloseTo(0.2);
+    const end = session.stopRecording()!;
+    expect(end.frames).toBe(BLOCK * 3);
+    const take = chunks[0]!;
+    expect(take.channels[0][0]).toBeCloseTo(0.1); // the voice alone
+    expect(take.backing![0][0]).toBeCloseTo(0.2); // the tab as it came in, before its level
+    expect(take.backing![1][BLOCK * 3 - 1]).toBeCloseTo(0.3);
+    expect(take.backing![0].length).toBe(BLOCK * 3);
+
+    // A take started with the tab off has no backing.
+    session.liveOn = false;
+    chunks.length = 0;
+    session.startRecording(false);
+    block(0.1);
+    session.stopRecording();
+    expect(chunks[0]!.backing).toBeUndefined();
+  });
 });
