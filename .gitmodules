@@ -1,0 +1,3 @@
+[submodule "extern/local-mic-effects"]
+	path = extern/local-mic-effects
+	url = https://github.com/angelcandas/local-mic-effects.git
