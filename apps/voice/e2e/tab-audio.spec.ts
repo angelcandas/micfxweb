@@ -82,7 +82,8 @@ test("a shared tab plays under the voice and goes in the take", async ({ page })
 
   // In recordings (the default): the take has the tab under the voice.
   await record(page);
-  expect(await toneInTake(page)).toBeGreaterThan(0.2);
+  // (the starting sound has no compressor, so the voice keeps its full level beside it)
+  expect(await toneInTake(page)).toBeGreaterThan(0.05);
 
   // Not in recordings: the voice alone.
   await panel.getByLabel("Tab audio options").click();

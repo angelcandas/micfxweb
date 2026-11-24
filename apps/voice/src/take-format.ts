@@ -5,12 +5,15 @@ import mp3Url from "@micfx/engine/mp3.wasm?url";
 import type { Mp3Reply, Mp3Request } from "./mp3-worker";
 import Mp3Worker from "./mp3-worker?worker";
 import { canEncodeOpus, encodeOggOpus } from "./ogg-opus";
+import { encodeWav } from "./tracks";
 
-export type TakeFormat = "wav" | "mp3" | "opus";
+export type TakeFormat = "wav" | "wav16" | "wav32" | "mp3" | "opus";
 const KEY = "micfx.record.format";
 
 export const TAKE_FORMATS: { id: TakeFormat; label: string }[] = [
   { id: "wav", label: "WAV (24-bit, as recorded)" },
+  { id: "wav16", label: "WAV (16-bit, CD)" },
+  { id: "wav32", label: "WAV (32-bit float)" },
   { id: "mp3", label: "MP3 (192 kbps)" },
   { id: "opus", label: "Opus (128 kbps, smallest)" },
 ];
@@ -18,7 +21,7 @@ export const TAKE_FORMATS: { id: TakeFormat; label: string }[] = [
 export function takeFormat(): TakeFormat {
   try {
     const value = localStorage.getItem(KEY);
-    return value === "mp3" || value === "opus" ? value : "wav";
+    return value === "mp3" || value === "opus" || value === "wav16" || value === "wav32" ? value : "wav";
   } catch {
     return "wav";
   }
@@ -67,5 +70,6 @@ export async function takeFile(wav: Blob, channels: Float32Array[], rate: number
     const date = made.toISOString().slice(0, 10);
     return { blob: await encodeOggOpus(channels, rate, { title: name, date, comment }), fileName: `${name}.opus` };
   }
+  if (format === "wav16" || format === "wav32") return { blob: encodeWav(channels, rate, format === "wav16" ? 16 : 32), fileName: `${name}.wav` };
   return { blob: wav, fileName: `${name}.wav` };
 }

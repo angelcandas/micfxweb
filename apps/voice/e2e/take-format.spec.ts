@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 // A take downloads as WAV, MP3 or Opus, as picked in Settings, with its name inside
@@ -47,6 +48,20 @@ test("a take downloads as MP3 or Opus with its name inside", async ({ page }) =>
       expect(info.title).toBe(file.suggestedFilename().replace(/\.\w+$/, ""));
     }
   }
+
+  // WAV at 16 or 32-bit (float) for the download; the take stays 24-bit in the browser.
+  for (const [format, bits, kind] of [["wav16", 16, 1], ["wav32", 32, 3]] as const) {
+    await pick(page, format);
+    const downloading = page.waitForEvent("download");
+    await show.click();
+    const file = await downloading;
+    expect(file.suggestedFilename()).toMatch(/\.wav$/);
+    const bytes = readFileSync((await file.path())!);
+    expect(bytes.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(bytes.readUInt16LE(20)).toBe(kind);
+    expect(bytes.readUInt16LE(34)).toBe(bits);
+  }
+  await pick(page, "opus");
 
   // The choice stays.
   await page.reload();

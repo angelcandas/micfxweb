@@ -59,3 +59,13 @@ body[data-web-app="daw"] .app-project { max-width: min(560px, 50vw); }
 .web-midi-row { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; padding: 6px 12px; cursor: pointer; }
 .web-midi-row .web-menu-hint { grid-column: 2; }
 .web-midi-row:hover { background: rgba(255, 255, 255, 0.05); }
+
+/* Audio settings: the rate, the low latency switch and the delay's parts. */
+.web-audio-settings { width: min(560px, calc(100vw - 32px)); }
+.web-audio-row { display: grid; grid-template-columns: 110px auto; gap: 4px 12px; align-items: center; }
+.web-audio-row .web-menu-hint { grid-column: 2; }
+.web-audio-label { color: var(--muted, #8791a7); }
+.web-audio-row select { justify-self: start; }
+.web-audio-row input[type="checkbox"] { justify-self: start; }
+.web-audio-delay { color: var(--text, #e9ecf4); font-weight: 600; }
+.web-audio-parts { font-variant-numeric: tabular-nums; }

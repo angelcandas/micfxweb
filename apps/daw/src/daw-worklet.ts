@@ -16,8 +16,12 @@ class DawProcessor extends AudioWorkletProcessor {
   private floats?: Float32Array;
   private rings?: Rings;
   private underruns = 0;
-  private reported = 0;
   private frames = 0;
+  /** The monitoring path's own delay, summed over the blocks since the last report (frames):
+   * what the engine had rendered ahead plus the mic still waiting in the input ring. */
+  private leadSum = 0;
+  private backlogSum = 0;
+  private measured = 0;
 
   constructor() {
     super();
@@ -57,15 +61,24 @@ class DawProcessor extends AudioWorkletProcessor {
         for (let ch = 0; ch < out.length; ch++) out[ch]![i] = floats[frame + Math.min(ch, r.outChannels - 1)]!;
       }
       Atomics.store(ints, r.outRead >> 2, read + BLOCK);
+      // Wakes the engine's audio thread at once: it renders the next block now.
+      Atomics.notify(ints, r.outRead >> 2);
+      this.leadSum += write - read;
+      // (less the block written just now, which the engine takes for the block it renders next)
+      this.backlogSum += Math.max(0, Atomics.load(ints, r.inWrite >> 2) - Atomics.load(ints, r.inRead >> 2) - BLOCK);
+      this.measured++;
     } else {
       this.underruns++;
     }
 
+    // Twice a second (in frames of this rate it's near enough): the underruns and the delay.
     this.frames += BLOCK;
-    if (this.frames >= 48000 && this.underruns !== this.reported) {
+    if (this.frames >= 24000) {
       this.frames = 0;
-      this.reported = this.underruns;
-      this.port.postMessage({ underruns: this.underruns });
+      const lead = this.measured ? this.leadSum / this.measured : 0;
+      const backlog = this.measured ? this.backlogSum / this.measured : 0;
+      this.leadSum = this.backlogSum = this.measured = 0;
+      this.port.postMessage({ underruns: this.underruns, lead, backlog });
     }
     return true;
   }
