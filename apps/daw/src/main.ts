@@ -4,6 +4,7 @@
 import { JuceBackend, type ParameterInfo } from "@micfx/bridge";
 import { createChooser, download } from "./chooser";
 import { DawEngine } from "./engine";
+import { addAutosaveStatus, flushOnHide } from "./versions";
 import "./web.css";
 
 const DESKTOP = new URL("desktop/", document.baseURI).href;
@@ -41,7 +42,9 @@ async function boot() {
   });
   backend.install();
 
+  let autosave: ReturnType<typeof addAutosaveStatus> | undefined;
   engine.onEvent = (name, payload) => {
+    if (name === "webSaved") { autosave?.saved((payload as { time: number }).time); return; }
     backend.emit(name, payload);
     if (name === "dawExport") void downloadExport(engine, payload as { done?: boolean; files?: string[]; error?: string });
     if (name === "dawSession") void followArming(engine, payload as { tracks?: { arm?: boolean }[] });
@@ -70,6 +73,8 @@ async function boot() {
   const title = document.querySelector(".app-title");
   if (title) title.textContent = "MicFX DAW";
   addSourceLink();
+  autosave = addAutosaveStatus(engine);
+  flushOnHide(engine);
 
   // Browsers start sound only after a click or a key.
   const resume = () => {

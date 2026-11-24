@@ -24,6 +24,7 @@
 #include "DawBridge.h"
 #include "Presets.h"
 #include "FactoryChains.h"
+#include "WebHistory.h"
 
 namespace juce { int wasmDispatchMessages (int maxMessages); }
 
@@ -191,11 +192,29 @@ struct Host
         pump->output.init (8192, 2);
         pump->input.init (8192, PluginProcessor::maxAppInputs);
         pump->startThread (juce::Thread::Priority::highest);
+
+        // The web keeps a project open at all times, so there's always somewhere to autosave.
+        auto& project = processor->getDawProject();
+        if (! project.isOpen())
+        {
+            const auto projects = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("MicFX Projects");
+            projects.createDirectory();
+            auto folder = projects.getChildFile (juce::String ("My Song") + daw::Project::extension);
+            for (int n = 2; folder.exists(); ++n)
+                folder = projects.getChildFile ("My Song " + juce::String (n) + daw::Project::extension);
+            bridge->newProject (folder);
+        }
+
+        history = std::make_unique<WebHistory> (processor->getDawEdit(), project,
+                                                [] (const juce::String& event, const juce::var& payload)
+                                                { micfx_js_event (event.toRawUTF8(), toJson (payload).toRawUTF8()); });
+        history->start();
     }
 
     ~Host()
     {
         pump.reset();
+        history.reset();
         bridge.reset();
         processor->releaseResources();
         processor.reset();
@@ -286,6 +305,28 @@ struct Host
         {
             library (args, complete);
         }
+        else if (name == "webHistory")
+        {
+            // [] -> { savedAt, path, unsaved, versions }; ["restore", id] -> { ok, error }
+            if (text (0) == "restore")
+            {
+                const auto error = history->restoreVersion (text (1));
+                auto* result = new juce::DynamicObject();
+                result->setProperty ("ok", error.isEmpty());
+                if (error.isNotEmpty())
+                    result->setProperty ("error", error);
+                complete (juce::var (result));
+            }
+            else
+            {
+                if (text (0) == "flush")
+                {
+                    history->flush();
+                    settings.saveIfNeeded();
+                }
+                complete (history->describe());
+            }
+        }
         else if (name == "loadPreset")
         {
             processor->setCurrentProgram ((int) arg (0));
@@ -330,6 +371,7 @@ struct Host
     std::unique_ptr<PluginProcessor> processor;
     std::unique_ptr<DawBridge> bridge;
     std::unique_ptr<AudioPump> pump;
+    std::unique_ptr<WebHistory> history;
     std::atomic<int> roundTripLatency { 0 };
 };
 
@@ -414,7 +456,16 @@ EMSCRIPTEN_KEEPALIVE int micfx_daw_dispatch() { return juce::wasmDispatchMessage
 EMSCRIPTEN_KEEPALIVE void micfx_daw_tick()
 {
     if (host != nullptr)
+    {
         host->bridge->tick();
+        host->history->tick();
+
+        // Settings (the open project...) go to storage within a second: a tab can close at
+        // any time, without the app's usual save on quit.
+        static int ticks = 0;
+        if (++ticks % 30 == 0)
+            host->settings.saveIfNeeded();
+    }
 }
 
 // A native function: name and its arguments as a JSON array. Answers with onDawComplete(callId).

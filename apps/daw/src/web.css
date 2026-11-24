@@ -36,3 +36,9 @@ body[data-web-app="daw"] .topbar .mode-switch { display: none !important; }
 }
 .web-dialog-buttons .web-dialog-primary { background: var(--accent, #6e8cff); border-color: transparent; color: #0b0d12; font-weight: 600; }
 @media (max-width: 480px) { .web-dialog-buttons { flex-wrap: wrap; } }
+
+/* Autosave status next to the project name (versions.ts). */
+.web-saved { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.25); text-underline-offset: 2px; }
+.web-saved:hover { color: var(--text, #e9ecf4); }
+.web-dialog-buttons button:disabled { opacity: 0.5; cursor: default; }
+body[data-web-app="daw"] .app-project { max-width: min(560px, 50vw); }

@@ -98,6 +98,53 @@ describe("daw.wasm", () => {
     expect(list("/home/web/Documents")).toContain("Test Song.micfx");
   });
 
+  it("keeps the undo history and versions across a restart", async () => {
+    const names = async () => ((await daw("session")).tracks as { name: string }[]).map((t) => t.name);
+    // One click after another (the history follows the undo manager between them).
+    const click = async (command: string, args: object = {}) => { await daw(command, args); await new Promise((r) => setTimeout(r, 30)); };
+    await click("addTrack", { name: "Keep A" });
+    await click("addTrack", { name: "Keep B" });
+    await click("undo");
+    expect(await names()).toContain("Keep A");
+    expect(await names()).not.toContain("Keep B");
+    const before = await call("webHistory", ["flush"]);
+    expect(before.unsaved).toBe(true);
+    expect(before.savedAt).toBeGreaterThan(0);
+
+    // The tab closes (no clean shutdown) and comes back.
+    m.ccall("micfx_daw_destroy", null, [], []);
+    m.ccall("micfx_daw_create", "number", ["number", "number"], [48000, 128]);
+    await daw("mode", { daw: true });
+    let session = await daw("session");
+    expect(session.project.name).toBe("Test Song");
+    expect(session.project.recoverable || "").toBe("");
+    expect(await names()).toContain("Keep A");
+    expect(await names()).not.toContain("Keep B");
+    expect(session.canUndo).toBe(true);
+    expect(session.canRedo).toBe(true);
+
+    await daw("redo");
+    expect(await names()).toContain("Keep B");
+    await daw("undo");
+    await daw("undo");
+    expect(await names()).not.toContain("Keep A");
+    await daw("redo");
+    session = await daw("session");
+    expect(session.tracks.map((t: { name: string }) => t.name)).toContain("Keep A");
+
+    // Saving makes a version; going back to it works.
+    await daw("save");
+    await new Promise((r) => setTimeout(r, 400));
+    const history = await call("webHistory", []);
+    const saved = history.versions.find((v: { saved: boolean }) => v.saved);
+    expect(saved).toBeTruthy();
+    await daw("addTrack", { name: "Later" });
+    expect(await names()).toContain("Later");
+    expect((await call("webHistory", ["restore", saved.id])).ok).toBe(true);
+    expect(await names()).not.toContain("Later");
+    expect(await names()).toContain("Keep A");
+  });
+
   it("sends the session and status to the page", () => {
     expect(events).toContain("dawSession");
     expect(events).toContain("dawStatus");

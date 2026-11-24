@@ -10,7 +10,7 @@ const extensions = (patterns: string) =>
 const parentOf = (path: string) => path.slice(0, Math.max(1, path.lastIndexOf("/")));
 const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
+export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text) node.textContent = text;

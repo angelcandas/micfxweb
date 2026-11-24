@@ -59,7 +59,8 @@ test("imports a file from the computer and plays it", async ({ page }) => {
 
 test("saves a project in the browser and opens it after a reload", async ({ page }) => {
   await open(page);
-  await page.keyboard.press(`${mod}+s`);
+  // A project is always open on the web (it autosaves): Save as names it.
+  await page.keyboard.press(`${mod}+Shift+s`);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await dialog.getByRole("textbox").fill("Web Song");
@@ -74,4 +75,38 @@ test("saves a project in the browser and opens it after a reload", async ({ page
   await openDialog.getByRole("option", { name: /Web Song/ }).click();
   await openDialog.getByRole("button", { name: "Open" }).click();
   await expect.poll(async () => (await session(page)).project?.name, { timeout: 10_000 }).toBe("Web Song");
+});
+
+test("keeps the work and its undo history across a reload, with versions to go back to", async ({ page }) => {
+  await open(page);
+  const call = (name: string, args: unknown[]) =>
+    page.evaluate(([n, a]) => (window as unknown as { micfxDaw: { call(n: string, a: unknown[]): Promise<unknown> } }).micfxDaw.call(n as string, a as unknown[]), [name, args] as const);
+  const names = async () => ((await session(page)).tracks ?? []).map((t) => t.name);
+  await call("daw", ["addTrack", { name: "Guitar" }]);
+  await expect(page.locator(".web-saved")).toHaveText(/Saved/, { timeout: 10_000 });
+
+  await page.reload();
+  await expect(page.getByText("Arm a track and press")).toBeVisible({ timeout: 20_000 });
+  expect(await names()).toContain("Guitar");
+  // The undo button still takes the step back.
+  await expect.poll(async () => ((await session(page)) as { canUndo?: boolean }).canUndo).toBe(true);
+  await page.mouse.click(900, 450);
+  await page.keyboard.press(`${mod}+z`);
+  await expect.poll(names).not.toContain("Guitar");
+  await page.keyboard.press(`${mod}+Shift+z`);
+  await expect.poll(names).toContain("Guitar");
+
+  // Saving keeps a version; going back to it from the Versions dialog.
+  await page.keyboard.press(`${mod}+s`);
+  await call("daw", ["addTrack", { name: "Bass" }]);
+  await expect.poll(names).toContain("Bass");
+  await page.locator(".web-saved").click();
+  const dialog = page.getByRole("dialog", { name: "Versions" });
+  await expect(dialog.getByRole("option", { name: /Saved/ }).first()).toBeVisible();
+  await page.screenshot({ path: "test-results/versions-dialog.png" });
+  await dialog.getByRole("option", { name: /Saved/ }).first().click();
+  await dialog.getByRole("button", { name: "Go back to this version" }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(names).not.toContain("Bass");
+  expect(await names()).toContain("Guitar");
 });
