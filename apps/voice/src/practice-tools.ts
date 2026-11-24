@@ -2,6 +2,7 @@
 // - "Range": a short test for your lowest and highest comfortable notes; then each song
 //   offers the key that fits your voice ("Fits you: +2").
 // - "Warm-ups": scales, sirens and intervals made in any key, sung and scored like a song.
+import { PARTS, type Part } from "./harmony";
 import { heldNote, readRange, spanText, suggestShift, writeRange, type VoiceRange } from "./range";
 import { EXERCISES, TEMPOS, exerciseOf, makeWarmup, noteName, renderBacking, renderGuide, rootFor, type Tempo } from "./warmups";
 
@@ -9,6 +10,9 @@ export interface PracticeToolsHost {
   listenPitch(listener: (midi: number) => void): () => void;
   songRange(): { name: string; lowest: number; highest: number; semitones: number; speed: number } | undefined;
   setShift(semitones: number): Promise<unknown>;
+  splitLeft(): { seconds: number; started: boolean } | undefined;
+  currentPart(): Part;
+  setPart(part: Part): Promise<void>;
   prepareMade(made: { name: string; key: string; seconds: number; guide: Float32Array; backing?: [Float32Array, Float32Array]; melody: string }): Promise<boolean>;
 }
 
@@ -40,8 +44,19 @@ export function addPracticeTools(host: PracticeToolsHost, startAudio: () => Prom
   else bar.append(rangeButton, warmupButton);
   bar.insertBefore(fit, bar.querySelector(".practice-report-button"));
 
+  // Duet mode: the part to sing (point 20).
+  const part = html("label", "web-part");
+  const partSelect = html("select", "dropdown web-part-select");
+  partSelect.title = "The part you sing: the melody, or a harmony a third above or below it, each scored on its own. Two singers can take a part each.";
+  for (const p of PARTS) partSelect.append(new Option(p.name, p.id));
+  part.append(html("span", "web-part-label", "Part"), partSelect);
+  bar.insertBefore(part, fit);
+  partSelect.addEventListener("change", () => void host.setPart(partSelect.value as Part));
+
   const refreshFit = () => {
     const song = host.songRange();
+    part.hidden = !song;
+    partSelect.value = host.currentPart();
     const range = readRange();
     if (!song || !range) {
       fit.hidden = true;
@@ -62,6 +77,7 @@ export function addPracticeTools(host: PracticeToolsHost, startAudio: () => Prom
   if (info) new MutationObserver(refreshFit).observe(info, { childList: true, characterData: true, subtree: true });
   refreshFit();
 
+  addSplitTime(host);
   rangeButton.addEventListener("click", () => openRange(host, startAudio, refreshFit));
   warmupButton.addEventListener("click", () => openWarmups(host));
 }
@@ -250,4 +266,24 @@ function openWarmups(host: PracticeToolsHost) {
   });
   dialog.append(form, fitsNote, actions);
   dialog.showModal();
+}
+
+//==============================================================================
+/** "About 3 min" (point 18): how long splitting a song takes, then how long it has left. */
+export function durationText(seconds: number): string {
+  if (seconds < 50) return "under a minute";
+  const minutes = Math.round(seconds / 60);
+  return minutes === 1 ? "about a minute" : `about ${minutes} min`;
+}
+
+function addSplitTime(host: PracticeToolsHost) {
+  const text = document.querySelector(".practice-progress-text");
+  if (!text || document.querySelector(".web-split-time")) return;
+  const time = html("span", "web-split-time", "");
+  text.after(time);
+  setInterval(() => {
+    const left = host.splitLeft();
+    const value = left ? (left.started ? `${durationText(left.seconds)} left` : `Splitting takes ${durationText(left.seconds)} here`) : "";
+    if (time.textContent !== value) time.textContent = value;
+  }, 500);
 }

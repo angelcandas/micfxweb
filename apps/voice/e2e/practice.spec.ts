@@ -94,6 +94,8 @@ test("a whole song is split into its voice and backing, then practised", async (
   await page.locator(".practice-open").click();
   await (await choosing).setFiles({ name: "Whole song.wav", mimeType: "audio/wav", buffer: singingWav(8) });
   await expect(page.locator(".practice-progress-text")).toContainText(/Loading|Taking the voice/, { timeout: 30_000 });
+  // How long it takes, then how long it has left (plan point 18).
+  await expect(page.locator(".web-split-time")).toHaveText(/^(Splitting takes (under a minute|about (a minute|\d+ min)) here|(under a minute|about (a minute|\d+ min)) left)$/);
   await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 360_000 });
   await expect(page.locator(".tracks-rows .track")).toHaveCount(2);
 });

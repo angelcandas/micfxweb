@@ -214,3 +214,6 @@ body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-moti
 .web-diagnostics-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 10px; font-size: 12.5px; }
 .web-diagnostics-list dt { color: var(--muted, #8f98ad); }
 .web-diagnostics-list dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.web-part { display: inline-flex; align-items: center; gap: 8px; color: var(--muted, #8f98ad); font-size: 13px; }
+.web-part[hidden] { display: none; }
+.web-split-time { color: var(--muted, #8f98ad); font-size: 12px; white-space: nowrap; }
