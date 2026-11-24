@@ -45,7 +45,9 @@ async function boot() {
   registerOffline();
 }
 
-// MicFX is free software (AGPLv3): the page says so and links to its source.
+// MicFX is free software (AGPLv3): the page says so and offers its source, as a .zip that
+// every deploy builds next to the app (scripts/source-archive.sh), so it works whether the
+// repository is public or not.
 // Once at the foot of the window (beside the audio status) and once under the app's name
 // (shown on wide windows).
 function addSourceLink() {
@@ -53,8 +55,7 @@ function addSourceLink() {
     Object.assign(document.createElement("a"), {
       className: "web-source",
       href: SOURCE,
-      target: "_blank",
-      rel: "noopener",
+      download: "micfx-web-source.zip",
       textContent: text,
       title: "MicFX is free software under the GNU AGPLv3. Get the source code of this web app and the desktop app.",
     });
@@ -70,7 +71,7 @@ function registerOffline() {
     navigator.serviceWorker.register("sw.js").catch((error) => console.warn("MicFX: offline mode isn't available", error));
 }
 
-const SOURCE = "https://github.com/angelcandas/micfxweb";
+const SOURCE = "source.zip";
 
 boot().catch((error) => {
   console.error(error);

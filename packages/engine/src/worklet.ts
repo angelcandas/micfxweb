@@ -106,6 +106,9 @@ class MicFxProcessor extends AudioWorkletProcessor {
       case "transport":
         this.session.transport(message.action, message.seconds);
         break;
+      case "loop":
+        this.session.setLoop(message.from, message.to);
+        break;
       case "pitch":
         this.pitchOn = message.on;
         engine.pitchEnable(message.on);

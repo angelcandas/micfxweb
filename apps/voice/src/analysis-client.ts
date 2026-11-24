@@ -1,5 +1,5 @@
 // The page's side of analysis-worker.ts: one worker, started the first time it's needed.
-import { Analysis, type FitChain, type SoundCheckPlan } from "@micfx/engine/analysis";
+import { Analysis, type FitChain, type SongSection, type SoundCheckPlan } from "@micfx/engine/analysis";
 import analysisUrl from "@micfx/engine/analysis.wasm?url";
 import type { AnalysisReply, AnalysisRequest } from "./analysis-worker";
 import AnalysisWorker from "./analysis-worker?worker";
@@ -51,4 +51,20 @@ export function pageAnalysis(): Promise<Analysis> {
     return new Analysis(await WebAssembly.compile(await response.arrayBuffer()));
   })();
   return onPage;
+}
+
+/** Practice: the song's sections (intro, verses, choruses...) from its audio. */
+export async function songSections(mono: Float32Array, sampleRate: number): Promise<SongSection[]> {
+  const reply = await call({ kind: "sections", mono, sampleRate }, [mono.buffer as ArrayBuffer]);
+  if ("error" in reply) throw new Error(reply.error);
+  if (!("sections" in reply)) throw new Error("no sections");
+  return reply.sections;
+}
+
+/** Practice's key and speed: the audio warped and transposed (the DAW's Warp). */
+export async function warpAudio(channels: Float32Array[], sampleRate: number, speed: number, semitones: number, voice: boolean): Promise<Float32Array[]> {
+  const reply = await call({ kind: "warp", channels, sampleRate, speed, semitones, voice }, channels.map((c) => c.buffer as ArrayBuffer));
+  if ("error" in reply) throw new Error(reply.error);
+  if (!("warped" in reply)) throw new Error("no audio");
+  return reply.warped;
 }

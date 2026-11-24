@@ -27,6 +27,25 @@ function fakeScorer() {
     scoreTime: () => {},
     scoreChanges: (all) => (all || pending ? ((pending = false), { reset: false, from: 0, notes: [], phrases: [{ i: 0, scored: true, score: 80 }], pass: 80 }) : undefined),
     scoreReport: () => ({ score: 80 }),
+    scoreShift: (semitones, speed, time) => {
+      calls.push(`shift ${semitones} ${speed} @${time}`);
+      return { notes: [0, 1 / speed, 60 + semitones, 0, 1 / speed, 2 / speed, 62 + semitones, 0], phrases: [0, 2 / speed], lowest: 60 + semitones, highest: 62 + semitones };
+    },
+    // Lines a second apart; what's kept is the text.
+    lyricsSet: (text) => lyricsOf(text),
+    lyricsAlign: () => lyricsOf(lastLyrics),
+    lyricsNudge: (index, by) => {
+      const lyrics = lyricsOf(lastLyrics);
+      lyrics.lines[index]!.start += by;
+      lyrics.lines[index]!.pinned = true;
+      return lyrics;
+    },
+  };
+  let lastLyrics = "";
+  const lyricsOf = (text: string) => {
+    lastLyrics = text;
+    const lines = text.split("\n").filter(Boolean).map((line, i) => ({ text: line, start: i, end: i + 1, pinned: false, timed: true, words: [line, i] }));
+    return { lines, saved: text, lrc: lines.map((l) => `[00:0${l.start}.00]${l.text}`).join("\n") };
   };
   return { scorer, calls };
 }
@@ -40,10 +59,13 @@ function setup(melody = "notes") {
   let saved: string | null = null;
   let picked: File | undefined;
   let pitchOn = false;
+  const downloads: [string, Blob][] = [];
+  const transport: string[] = [];
+  const warps: number[] = [];
   const host: PracticeHost = {
     store,
     scorer: async () => scorer,
-    decode: async () => [new Float32Array(44100 * 3), new Float32Array(44100 * 3)],
+    decode: async () => [new Float32Array(44100 * 20), new Float32Array(44100 * 20)],
     split: async (song, report) => {
       report("downloading", 0.5);
       report("splitting", 1);
@@ -52,6 +74,7 @@ function setup(melody = "notes") {
     encodeWav: (channels) => new Blob([`wav ${channels.length}`]),
     findMelody: async () => ({ melody, key: "A minor" }),
     pickFile: async () => picked,
+    download: (blob, name) => void downloads.push([name, blob]),
     install: async () => {
       tracks.length = 0;
       tracks.push(7);
@@ -60,6 +83,16 @@ function setup(melody = "notes") {
     setGuide: (id, level) => void guides.push([id, level]),
     trackIds: () => tracks,
     restart: () => {},
+    seek: (seconds, play) => void transport.push(`seek ${seconds}${play ? " play" : ""}`),
+    loop: (from, to) => void transport.push(from === undefined ? "unloop" : `loop ${from}-${to}`),
+    sections: async () => [
+      { name: "Verse 1", kind: "verse", letter: "A", colour: "#4f8cff", start: 0, end: 8, bars: 4 },
+      { name: "Chorus 1", kind: "chorus", letter: "B", colour: "#ff7a59", start: 8, end: 16, bars: 4 },
+    ],
+    warp: async (channels, _rate, speed) => {
+      warps.push(speed);
+      return channels.map((c) => new Float32Array(Math.round(c.length / speed)));
+    },
     pitch: (on) => void (pitchOn = on),
     latency: () => 0,
     emit: (name, payload) => void events.push([name, payload]),
@@ -72,7 +105,7 @@ function setup(melody = "notes") {
     for (let i = 0; i < 50 && !events.some(([n, e]) => n === "practice" && e.state === state); ++i) await new Promise((r) => setTimeout(r));
     return events.find(([n, e]) => n === "practice" && e.state === state)?.[1];
   };
-  return { practice, host, store, events, calls, guides, waitFor, pick: (file: File) => (picked = file), saved: () => saved, pitchOn: () => pitchOn };
+  return { practice, host, store, events, calls, guides, waitFor, pick: (file: File) => (picked = file), saved: () => saved, pitchOn: () => pitchOn, downloads, transport, warps };
 }
 
 describe("practice", () => {
@@ -89,7 +122,7 @@ describe("practice", () => {
     const id = `${await fileId(voice)}-voice`;
     expect(id).toMatch(/^[0-9a-f]{20}-voice$/);
     expect([...t.store.files.keys()].sort()).toEqual([`${id}/My Song.wav`, `${id}/info.json`, `${id}/melody.txt`]);
-    expect(await t.practice.handle("library")).toEqual([{ id, name: "My Song", key: "A minor", seconds: 3, voiceOnly: true, opened: 1000, current: true }]);
+    expect(await t.practice.handle("library")).toEqual([{ id, name: "My Song", key: "A minor", seconds: 20, voiceOnly: true, opened: 1000, current: true }]);
 
     // The same file again: from the library, no analysis.
     t.events.length = 0;
@@ -143,6 +176,70 @@ describe("practice", () => {
 
     t.practice.tick(undefined, { position: 2.6, playing: false }, rate);
     expect(t.events.find(([n]) => n === "practiceReport")?.[1]).toEqual({ score: 80 });
+  });
+
+  it("places lyrics, keeps them with the song, and saves them as an .lrc", async () => {
+    const t = setup();
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
+    const lines = (await t.practice.handle("lyrics", { text: "One\nTwo" })) as { text: string; start: number }[];
+    expect(lines.map((l) => l.text)).toEqual(["One", "Two"]);
+    const nudged = (await t.practice.handle("nudgeLyric", { line: 1, at: 1.5 })) as { start: number; pinned: boolean }[];
+    expect(nudged[1]).toMatchObject({ start: 1.5, pinned: true });
+
+    await t.practice.handle("exportLyrics");
+    expect(t.downloads[0]?.[0]).toBe("Song.lrc");
+    expect(await t.downloads[0]![1].text()).toContain("[00:00.00]One");
+
+    // Opened again from the library: the lyrics come with it.
+    const [entry] = (await t.practice.handle("library")) as { id: string }[];
+    t.events.length = 0;
+    await t.practice.handle("openCached", { id: entry!.id });
+    expect((await t.waitFor("ready")).song.lyrics.map((l: { text: string }) => l.text)).toEqual(["One", "Two"]);
+  });
+
+  it("changes the key and speed (rendered once, then kept), and loops a phrase or a section", async () => {
+    const t = setup();
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
+    await t.practice.handle("lyrics", { text: "One\nTwo" });
+
+    t.events.length = 0;
+    await t.practice.handle("speed", { speed: 0.5, semitones: -2 });
+    expect(t.warps).toEqual([0.5]); // the guide (no backing on a voice-only song)
+    expect(t.events.some(([, e]) => e?.state === "shifting" && e.shift.pending && e.shift.target.speed === 0.5)).toBe(true);
+    const ready = t.events.find(([, e]) => e?.state === "ready")![1];
+    expect(ready.song.shift).toMatchObject({ speed: 0.5, semitones: -2, pending: false });
+    expect(ready.song.notes[2]).toBe(58); // the melody moved with it
+    expect(ready.song.lyrics[1].start).toBe(2); // and the lyrics are in the time it plays
+    expect([...t.store.files.keys()].some((k) => k.endsWith("shift-0.500--2.00-guide.wav"))).toBe(true);
+
+    // Back and forth: the original needs nothing rendered; the same change again is kept.
+    await t.practice.handle("speed", { speed: 1, semitones: 0 });
+    await t.practice.handle("speed", { speed: 0.5, semitones: -2 });
+    expect(t.warps).toEqual([0.5]);
+
+    // A phrase loop starts a moment before it, in the song as it plays (half speed: twice as late).
+    t.events.length = 0;
+    await t.practice.handle("loop", { phrase: 0 });
+    expect(t.transport.at(-2)).toBe("loop 0-5.2"); // (0 - 1.5 lead-in → 0) .. (2 + 0.6) / 0.5
+    expect(t.transport.at(-1)).toBe("seek 0 play");
+    expect(t.events[0]?.[1]).toMatchObject({ state: "loop", song: { loop: { phrase: 0, lastPhrase: 0, section: -1 } } });
+
+    // Sections: found once, kept, then a section loop.
+    await t.practice.handle("sections");
+    const found = await t.waitFor("sections");
+    for (let i = 0; i < 20 && !Array.isArray(t.events.filter(([, e]) => e?.state === "sections").at(-1)?.[1].sections); ++i) await new Promise((r) => setTimeout(r));
+    expect(t.events.filter(([, e]) => e?.state === "sections").at(-1)?.[1].sections).toHaveLength(2);
+    expect(found).toBeDefined();
+    await t.practice.handle("loop", { section: 1, speed: 0.5, semitones: -2 });
+    expect(t.transport.at(-2)).toBe("loop 13-33.2"); // (8 - 1.5) / 0.5 .. (16 + 0.6) / 0.5
+    expect((await t.practice.handle("state")) as { song: { loop: { phrase: number; lastPhrase: number } } }).toMatchObject({ song: { loop: { phrase: -1, section: 1 } } });
+
+    await t.practice.handle("unloop");
+    expect(t.transport.at(-1)).toBe("unloop");
   });
 
   it("keeps the guide level and picks the song up again after a reload", async () => {
