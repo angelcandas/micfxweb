@@ -7,16 +7,18 @@
     "build": "node scripts/sync-desktop-ui.mjs && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p .",
-    "test": "playwright test"
+    "test": "vitest run && playwright test",
+    "test:unit": "vitest run"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.19.1",
     "typescript": "5.9.3",
     "vite": "8.3.8",
-    "@playwright/test": "1.63.0",
-    "@types/node": "22.19.1"
+    "vitest": "4.0.15"
   },
   "dependencies": {
-    "@micfx/engine": "workspace:*",
-    "@micfx/bridge": "workspace:*"
+    "@micfx/bridge": "workspace:*",
+    "@micfx/engine": "workspace:*"
   }
 }

@@ -9,6 +9,8 @@
   "include": [
     "src",
     "e2e",
+    "test",
+    "vitest.config.ts",
     "vite.config.ts",
     "playwright.config.ts"
   ]

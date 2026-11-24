@@ -10,6 +10,7 @@ import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
 import { Tracks } from "./tracks";
+import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -53,8 +54,9 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   // The last session (values, order, preset) comes back, as the desktop app's state does.
   const restore = () => {
     try {
-      const saved = JSON.parse(storage()?.getItem(SESSION_KEY) ?? "null") as { values?: Record<string, number>; order?: string[]; preset?: number } | null;
+      const saved = JSON.parse(storage()?.getItem(SESSION_KEY) ?? "null") as { values?: Record<string, number>; order?: string[]; preset?: number; scenes?: SavedScenes } | null;
       if (!saved) return;
+      scenes.restore(saved.scenes);
       for (const [id, value] of Object.entries(saved.values ?? {})) if (id in parameters) shadow.setValue(id, Number(value));
       if (Array.isArray(saved.order)) shadow.setOrder(saved.order.map(String));
       currentPreset = typeof saved.preset === "number" ? saved.preset : -1;
@@ -68,12 +70,35 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try {
-        storage()?.setItem(SESSION_KEY, JSON.stringify({ values: allValues(), order: shadow.getOrder(), preset: currentPreset }));
+        storage()?.setItem(SESSION_KEY, JSON.stringify({ values: allValues(), order: shadow.getOrder(), preset: currentPreset, scenes: scenes.save() }));
       } catch {
         // Storage full or blocked: the session just isn't kept.
       }
     }, SESSION_SAVE_MS);
   };
+
+  // Undo/redo and scenes work on the parameters the way the page's own controls do.
+  const access: ParameterAccess = {
+    ids,
+    info: parameters,
+    get: (id) => shadow.getValue(id) ?? parameters[id]!.default,
+    set: (id, value) => {
+      shadow.setValue(id, value);
+      audio.set({ [id]: value });
+      backend?.setParameter(id, shadow.getValue(id) ?? value);
+      saveSoon();
+    },
+  };
+  const history = new LiveHistory(access);
+  const describeHistory = () => ({ undo: history.undoName, redo: history.redoName, preset: currentPreset });
+  history.getPreset = () => currentPreset;
+  history.setPreset = (index) => {
+    currentPreset = index;
+    saveSoon();
+  };
+  history.onChange = () => backend?.emit("liveHistory", describeHistory());
+  const scenes = new Scenes(access);
+  scenes.onChange = () => saveSoon();
 
   /** Every parameter, as the shadow engine has them. */
   const allValues = () => Object.fromEntries(ids.map((id) => [id, shadow.getValue(id) ?? parameters[id]!.default]));
@@ -183,6 +208,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     recording: recording && audio.running ? Math.max(0, lastMeters.recording ?? 0) : -1,
     capture: -1,
     transport: { ...transport, length: Math.max(transport.length, tracks.length), loading: tracks.loading },
+    scenes: scenes.describe(),
   });
 
   const functions: Record<string, NativeFunction> = {
@@ -193,6 +219,9 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
     getPresets: () => presets.map(({ name, category }) => ({ name, category })),
     loadPreset: (index: number) => {
+      const preset = presets[Number(index)];
+      if (!preset) return currentPreset;
+      history.label(`Load preset ${preset.name}`);
       if (!shadow.loadPreset(Number(index))) return currentPreset;
       currentPreset = Number(index);
       audio.loadPreset(currentPreset);
@@ -321,9 +350,16 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     daw: () => null,
     practice: () => null,
     looper: () => null,
-    liveHistory: () => null,
+    liveHistory: (action?: string, name?: string) => {
+      if (action === "undo") history.undo();
+      if (action === "redo") history.redo();
+      if (action === "label") history.label(String(name ?? ""));
+      if (action === "hold") history.hold(String(name ?? ""));
+      if (action === "release") history.release();
+      return describeHistory();
+    },
     liveMacros: () => null,
-    scenes: () => null,
+    scenes: (action = "list", options?: Record<string, unknown>) => scenes.handle(String(action), options ?? {}),
     setlist: () => null,
     library,
     midi: () => null,
@@ -351,6 +387,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     },
     /** The desktop UI has loaded: the meters event starts. */
     started() {
+      history.start();
       const tick = () => {
         backend?.emit("meters", meters());
         setTimeout(tick, audio.running ? 33 : METER_IDLE_MS);
