@@ -79,7 +79,7 @@ const model = process.env.MICFX_STEMS_MODEL;
 
 test("a whole song is split into its voice and backing, then practised", async ({ page }) => {
   test.skip(!model || !existsSync(model), "MICFX_STEMS_MODEL isn't set");
-  test.setTimeout(300_000);
+  test.setTimeout(420_000); // one Worker on CI's 4 cores: about 2 minutes for these 8 seconds
   await page.route(/huggingface\.co/, (route) => route.fulfill({ status: 200, contentType: "application/octet-stream", body: readFileSync(model!) }));
   await page.goto("/");
   await page.getByRole("button", { name: "Done" }).click();
@@ -87,8 +87,8 @@ test("a whole song is split into its voice and backing, then practised", async (
 
   const choosing = page.waitForEvent("filechooser");
   await page.locator(".practice-open").click();
-  await (await choosing).setFiles({ name: "Whole song.wav", mimeType: "audio/wav", buffer: singingWav(12) });
+  await (await choosing).setFiles({ name: "Whole song.wav", mimeType: "audio/wav", buffer: singingWav(8) });
   await expect(page.locator(".practice-progress-text")).toContainText(/Downloading|Loading|Taking the voice/, { timeout: 30_000 });
-  await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 240_000 });
+  await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 360_000 });
   await expect(page.locator(".tracks-rows .track")).toHaveCount(2);
 });

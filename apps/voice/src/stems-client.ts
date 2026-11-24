@@ -9,12 +9,15 @@ import StemsWorker from "./stems-worker?worker";
 export type SplitPhase = "downloading" | "loading" | "splitting";
 type Stereo = [Float32Array, Float32Array];
 
-/** How many Workers: each holds the model (a few hundred MB), so a few at most. */
+/**
+ * How many Workers: each holds its own model and working memory (well over 1 GB while it
+ * separates), and they all share the tab's memory, so two only on a machine with plenty
+ * (browsers report 8 GB at most) and cores to spare.
+ */
 function workerCount(chunks: number): number {
   const cores = navigator.hardwareConcurrency || 2;
-  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
-  const byMemory = memory <= 4 ? 1 : memory <= 8 ? 2 : 3;
-  return Math.max(1, Math.min(chunks, byMemory, Math.floor(cores / 2) || 1));
+  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
+  return Math.max(1, Math.min(chunks, memory >= 8 && cores >= 8 ? 2 : 1));
 }
 
 /** The weights: from the browser's files, else downloaded (with progress) and kept. */
