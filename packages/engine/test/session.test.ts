@@ -100,4 +100,53 @@ describe("session", () => {
     expect(chunks.every((c) => c.dry?.every((s) => Math.abs(s - 0.05) < 1e-6))).toBe(true);
     expect(session.stopRecording()).toBeUndefined();
   });
+
+  it("counts in with clicks, then records from beat 1 and plays; the click is never in the take", () => {
+    const chunks: TakeChunk[] = [];
+    const session = new Session(RATE, (c) => chunks.push(c));
+    session.metronome.set({ bpm: 120, beatsPerBar: 4 }); // a beat is 24000 frames
+    session.transport("seek", 1);
+    session.startRecording(false, 1); // one bar: 96000 frames
+    expect(session.playing).toBe(false);
+    expect(session.countInBeats).toBe(4);
+
+    const countIn = run(session, Math.ceil(96000 / BLOCK) - 1, 0, 0.5);
+    const beats = [0, 24000, 48000, 72000];
+    for (const at of beats) expect(Math.max(...countIn.slice(at, at + 200).map(Math.abs))).toBeGreaterThan(0.05);
+    expect(Math.max(...countIn.slice(10000, 20000).map(Math.abs))).toBe(0); // quiet between clicks
+    // The downbeat is louder.
+    const peak = (at: number) => Math.max(...countIn.slice(at, at + 400).map(Math.abs));
+    expect(peak(0)).toBeGreaterThan(peak(24000) * 1.3);
+    expect(session.recordingSeconds).toBe(-1);
+    expect(session.position).toBe(48000); // the transport waits
+
+    // The block where the count-in ends: the take starts mid-block, at its last frames.
+    run(session, 3, 0.25, 0.5);
+    expect(session.playing).toBe(true);
+    expect(session.countInBeats).toBe(0);
+    const frames = Math.ceil(96000 / BLOCK) * BLOCK - 96000 + 2 * BLOCK;
+    expect(session.position).toBe(48000 + frames);
+    const end = session.stopRecording()!;
+    expect(end).toEqual({ start: 48000, frames });
+    const take = new Float32Array(chunks.reduce((n, c) => n + c.channels[0].length, 0));
+    let at = 0;
+    for (const c of chunks) take.set(c.channels[0], (at += c.channels[0].length) - c.channels[0].length);
+    expect(take.length).toBe(frames);
+    expect(take.every((v) => Math.abs(v - 0.25) < 1e-6)).toBe(true); // the voice only
+  });
+
+  it("clicks on the transport's beats while it plays, and on its own clock when stopped", () => {
+    const session = new Session(RATE, () => {});
+    session.metronome.set({ on: true, bpm: 120, beatsPerBar: 4 });
+    session.transport("seek", 0.25); // mid-beat: the first click waits for beat 2
+    session.transport("play");
+    const out = run(session, Math.ceil(36000 / BLOCK));
+    expect(Math.max(...out.slice(0, 11000).map(Math.abs))).toBe(0);
+    expect(Math.max(...out.slice(12000, 12200).map(Math.abs))).toBeGreaterThan(0.05); // 0.5 s
+    session.transport("pause");
+    const free = run(session, 4);
+    expect(Math.max(...free.slice(0, 200).map(Math.abs))).toBeGreaterThan(0.05); // starts on a beat of its own
+    session.metronome.set({ on: false });
+    expect(Math.max(...run(session, 400).map(Math.abs))).toBe(0);
+  });
 });

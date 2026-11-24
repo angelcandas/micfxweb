@@ -19,7 +19,7 @@ export interface RecordedTake {
 }
 
 /** The meters with the transport and the recorder, as the worklet sends them. */
-export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown; looper?: LooperState; pitch?: Float64Array };
+export type LiveMeters = Meters & { transport?: TransportState; recording?: number; countIn?: number; status?: unknown; looper?: LooperState; pitch?: Float64Array };
 
 export interface LiveAudioInfo {
   values: ValueInfo[];
@@ -222,10 +222,15 @@ export class LiveAudio {
     this.post({ type: "transport", action, seconds });
   }
 
-  /** Starts a take where the playhead is (and plays). */
-  startRecording(includeDry: boolean): void {
+  /** Starts a take where the playhead is (and plays), after `countIn` bars of clicks. */
+  startRecording(includeDry: boolean, countIn = 0): void {
     this.takeChunks = [];
-    this.post({ type: "record", on: true, dry: includeDry });
+    this.post({ type: "record", on: true, dry: includeDry, countIn });
+  }
+
+  /** The click: on or off, its tempo, beats in a bar, level. */
+  metronome(settings: { on?: boolean; bpm?: number; beatsPerBar?: number; volume?: number }): void {
+    this.post({ type: "metronome", ...settings });
   }
 
   /** Ends the take; undefined when nothing was recording. */
