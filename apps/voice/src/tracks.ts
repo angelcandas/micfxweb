@@ -1,6 +1,7 @@
 // The sing-along tracks on the web: backing songs and recorded takes, kept in this browser
 // (IndexedDB) so they are still there after a reload. The desktop keeps files in a folder;
 // here a take is a WAV you can download. The audio plays in the worklet's Session.
+import { takeFile, takeFormat } from "./take-format";
 import type { KeyEstimate } from "@micfx/engine";
 import type { LiveAudio, RecordedTake } from "./audio";
 import { compileEngine } from "./audio";
@@ -204,12 +205,31 @@ export class Tracks {
     else this.onChanged();
   }
 
-  /** Downloads the last take (and its dry file). False when there is none. */
+  /**
+   * Downloads the last take (and its dry file) in the format picked in Settings. False when
+   * there is none.
+   */
   downloadLastTake(): boolean {
     const take = this.lastTake ?? [...this.tracks].reverse().find((t) => t.isTake);
     if (!take) return false;
-    download(take.audio, take.fileName);
-    if (take.dry && take.dryFileName) download(take.dry, take.dryFileName);
+    const format = takeFormat();
+    const save = async (wav: Blob, fileName: string, cached?: { rate: number; channels: Float32Array[] }) => {
+      const name = fileName.replace(/\.wav$/i, "");
+      if (format === "wav") return download(wav, fileName);
+      const rate = cached?.rate ?? (await wavRate(wav));
+      const channels = cached?.channels ?? (await decode(wav, rate));
+      const file = await takeFile(wav, channels, rate, name, format);
+      download(file.blob, file.fileName);
+    };
+    void (async () => {
+      try {
+        await save(take.audio, take.fileName, await this.channels(take, await wavRate(take.audio)));
+        if (take.dry && take.dryFileName) await save(take.dry, take.dryFileName);
+      } catch (error) {
+        this.onError(`Couldn't make the ${format.toUpperCase()} file (${error instanceof Error ? error.message : String(error)}), so here is the WAV.`);
+        download(take.audio, take.fileName);
+      }
+    })();
     return true;
   }
 
@@ -356,6 +376,13 @@ function peaks(channels: Float32Array[], rate: number): number[] {
     out.push(Math.round(peak * 1000) / 1000);
   }
   return out;
+}
+
+/** A WAV's sample rate, from its header (44.1 kHz when it can't tell). */
+async function wavRate(wav: Blob): Promise<number> {
+  const head = new DataView(await wav.slice(0, 28).arrayBuffer());
+  const rate = head.byteLength >= 28 ? head.getUint32(24, true) : 0;
+  return rate >= 8000 && rate <= 192000 ? rate : 44100;
 }
 
 /** 24-bit PCM WAV. */
