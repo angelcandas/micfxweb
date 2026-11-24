@@ -4,6 +4,7 @@
 import { JuceBackend } from "@micfx/bridge";
 import { createShadowEngine, LiveAudio } from "./audio";
 import { createNative } from "./native";
+import { addMetronome } from "./metronome-ui";
 import { registerOffline } from "./update";
 import { addWebSettings, openSharedSound } from "./web-panels";
 import "./web.css";
@@ -44,6 +45,7 @@ async function boot() {
   document.title = "MicFX Voice";
   addSourceLink();
   addWebSettings(native.web);
+  addMetronome(native.web);
   native.started();
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));

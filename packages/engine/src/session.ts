@@ -4,6 +4,8 @@
 // voice after its limiter, a -1 dB guard keeps the sum from clipping, and a take is the voice
 // as you hear it (and, if asked, the dry mic), without the music.
 
+import { Metronome } from "./metronome";
+
 export interface TrackOptions {
   gain?: number;
   muted?: boolean;
@@ -36,6 +38,8 @@ export type TransportAction = "play" | "pause" | "stop" | "seek";
 const CEILING = 0.89125; // -1 dB, as the desktop's applyPeakGuard
 
 export class Session {
+  /** The click, on this session's beat grid. */
+  readonly metronome: Metronome;
   /** Playhead, in frames. */
   position = 0;
   playing = false;
@@ -47,6 +51,8 @@ export class Session {
   private readonly chunkFrames: number;
 
   private recording = false;
+  /** Frames left of a count-in before the take starts (and the transport with it). */
+  private countIn = 0;
   private recordDry = false;
   private recordStart = 0;
   private recorded = 0;
@@ -59,6 +65,7 @@ export class Session {
   ) {
     this.guardRelease = 1 - Math.exp(-1 / (0.1 * sampleRate)); // ~100 ms
     this.chunkFrames = Math.round(sampleRate);
+    this.metronome = new Metronome(sampleRate);
   }
 
   /** The end of the last track, in frames. */
@@ -74,7 +81,12 @@ export class Session {
 
   /** Seconds recorded, or -1 when not recording. */
   get recordingSeconds(): number {
-    return this.recording ? this.recorded / this.sampleRate : -1;
+    return this.recording && this.countIn === 0 ? this.recorded / this.sampleRate : -1;
+  }
+
+  /** Beats left of the count-in (rounded up), 0 when there's none. */
+  get countInBeats(): number {
+    return this.countIn > 0 ? Math.ceil(this.countIn / this.metronome.beatFrames - 1e-9) : 0;
   }
 
   addTrack(id: number, channels: Float32Array[], start: number, options: TrackOptions = {}): void {
@@ -114,6 +126,7 @@ export class Session {
       case "stop":
         this.playing = false;
         this.position = 0;
+        this.metronome.anchor = 0;
         break;
       case "seek":
         this.position = Math.max(0, Math.round((seconds ?? 0) * this.sampleRate));
@@ -121,14 +134,19 @@ export class Session {
     }
   }
 
-  /** Starts a take where the playhead is, and plays (as the desktop's Record). */
-  startRecording(includeDry: boolean): void {
+  /**
+   * Starts a take where the playhead is, and plays (as the desktop's Record); after
+   * `countInBars` of clicks when asked, with beat 1 where the take starts.
+   */
+  startRecording(includeDry: boolean, countInBars = 0): void {
     if (this.recording) this.stopRecording();
     this.recording = true;
     this.recordDry = includeDry;
     this.recordStart = this.position;
     this.recorded = 0;
-    this.playing = true;
+    this.metronome.anchor = this.position;
+    this.countIn = countInBars > 0 ? this.metronome.countInFrames(countInBars) : 0;
+    this.playing = this.countIn === 0;
   }
 
   /** Ends the take: the last chunk goes out, then where it belongs. Pauses, as the desktop does. */
@@ -137,6 +155,7 @@ export class Session {
     this.flush();
     this.recording = false;
     this.playing = false;
+    this.countIn = 0;
     return { start: this.recordStart, frames: this.recorded };
   }
 
@@ -145,8 +164,22 @@ export class Session {
    * voice, then adds the tracks under it while playing.
    */
   process(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number): void {
+    // A count-in: clicks, then the take and the transport start mid-block.
+    if (this.countIn > 0) {
+      const count = Math.min(frames, this.countIn);
+      this.metronome.process(left, right, 0, count, -this.countIn, true);
+      this.countIn -= count;
+      if (this.countIn > 0) return;
+      this.playing = true;
+      if (count < frames) this.process(left.subarray(count), right === left ? left.subarray(count) : right.subarray(count), mic.subarray(count), frames - count);
+      return;
+    }
     if (this.recording) this.record(left, right, mic, frames);
-    if (!this.playing) return;
+    if (!this.playing) {
+      this.metronome.process(left, right, 0, frames, undefined);
+      return;
+    }
+    const clickFrom = this.position;
 
     // A loop: the block is played in parts, going back to its start at its end.
     let mixed = false;
@@ -161,6 +194,21 @@ export class Session {
       if (loop && this.position >= loop.to) this.position = loop.from;
     }
     if (mixed || this.guardGain < 1) this.guard(left, right, frames);
+    // The click after the guard, on the transport's grid (loops jump it, as they should).
+    if (this.metronome.on) this.click(left, right, clickFrom, frames);
+  }
+
+  private click(left: Float32Array, right: Float32Array, from: number, frames: number) {
+    const loop = this.loop;
+    let position = from;
+    let done = 0;
+    while (done < frames) {
+      if (loop && position >= loop.to) position = loop.from;
+      const count = loop && position < loop.to ? Math.min(frames - done, loop.to - position) : frames - done;
+      this.metronome.process(left, right, done, count, position - this.metronome.anchor);
+      position += count;
+      done += count;
+    }
   }
 
   /** The tracks from the playhead into `left`/`right` at `offset`, `frames` of them; true when any played. */

@@ -29,6 +29,7 @@ const MIDI_KEY = "micfx.midi";
 const LOOPER_KEY = "micfx.looper";
 const SETLIST_KEY = "micfx.setlist";
 const PRACTICE_KEY = "micfx.practice";
+const METRONOME_KEY = "micfx.metronome";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -84,10 +85,31 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     }
   };
 
+  // The click and the count-in (plan section 9, point 3). Their tempo is the looper's, so
+  // a tap in either sets both.
+  const metronomePrefs = (() => {
+    try {
+      return { on: false, countIn: 0, volume: 0.6, ...(JSON.parse(storage()?.getItem(METRONOME_KEY) ?? "{}") as { on?: boolean; countIn?: number; volume?: number }) };
+    } catch {
+      return { on: false, countIn: 0, volume: 0.6 };
+    }
+  })();
+  const metronomeSettings = () => ({ on: metronomePrefs.on, volume: metronomePrefs.volume, bpm: looperState.bpm, beatsPerBar: looperState.beatsPerBar });
+  const setMetronome = (settings: { on?: boolean; countIn?: number; volume?: number }) => {
+    Object.assign(metronomePrefs, Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined)));
+    audio.metronome(metronomeSettings());
+    try {
+      storage()?.setItem(METRONOME_KEY, JSON.stringify(metronomePrefs));
+    } catch {
+      // not kept
+    }
+  };
+
   const setLooper = (settings: { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }) => {
     for (const [key, value] of Object.entries(settings)) if (value !== undefined) (looperPrefs as Record<string, unknown>)[key] = value;
     shadow.looperSettings(settings);
     audio.looperSettings(settings);
+    if (settings.bpm !== undefined || settings.beatsPerBar !== undefined) audio.metronome({ bpm: settings.bpm, beatsPerBar: settings.beatsPerBar });
     looperState = { ...looperState, ...Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined)) };
     saveLooperPrefs();
   };
@@ -380,6 +402,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         pushToAudio();
         audio.wantStatus(true);
         audio.looperSettings(looperPrefs);
+        audio.metronome(metronomeSettings());
         audio.pitch(practiceOn);
         transport = { ...transport, playing: false };
         await tracks.pushAll();
@@ -564,7 +587,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       await stopping;
       await startAudio();
       if (!audio.running) return { ok: false, error: "Start the sound first: MicFX needs your microphone to record." };
-      audio.startRecording(Boolean(includeDry));
+      audio.startRecording(Boolean(includeDry), metronomePrefs.countIn);
       recording = true;
       transport = { ...transport, playing: true };
       return { ok: true, error: "" };
@@ -674,6 +697,10 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       tracks,
       sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
       applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),
+      /** The click, the count-in (bars) and the shared tempo. */
+      metronome: () => ({ ...metronomePrefs, bpm: looperState.bpm, beatsPerBar: looperState.beatsPerBar, countingIn: lastMeters.countIn ?? 0 }),
+      setMetronome,
+      setTempo: (bpm: number) => setLooper({ bpm: Math.max(30, Math.min(300, bpm)) }),
       /** Playing or recording: not a moment to restart. */
       busy: () => transport.playing || recording,
       /** Saves the session now, if a change is waiting (before a backup). */

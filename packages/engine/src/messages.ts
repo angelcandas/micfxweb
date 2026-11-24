@@ -1,4 +1,5 @@
 // The messages between the page and the engine's AudioWorkletProcessor.
+import type { MetronomeSettings } from "./metronome";
 import type { EngineStatus, FactoryPreset, LooperCommand, LooperState, Meters, ParameterInfo, ValueInfo } from "./engine";
 import type { TakeChunk, TakeEnd, TrackOptions, TransportAction } from "./session";
 
@@ -21,8 +22,10 @@ export type ToWorklet =
   | { type: "transport"; action: TransportAction; seconds?: number }
   /** Loops from..to seconds (Practice); without them, the loop ends. */
   | { type: "loop"; from?: number; to?: number }
-  /** Starts a take (and plays), or ends it: "takeChunk"s then "takeEnd" follow. */
-  | { type: "record"; on: boolean; dry?: boolean }
+  /** Starts a take (and plays; after a count-in of `countIn` bars), or ends it: "takeChunk"s then "takeEnd" follow. */
+  | { type: "record"; on: boolean; dry?: boolean; countIn?: number }
+  /** The click: on or off, its tempo, beats in a bar and level. */
+  | ({ type: "metronome" } & MetronomeSettings)
   /** The looper: a button, a layer's gain or mute, or its tempo and volume. */
   | { type: "looper"; command: LooperCommand }
   | { type: "looperLayer"; layer: number; gain?: number; muted?: boolean }
@@ -60,6 +63,8 @@ export type FromWorklet =
       status?: EngineStatus;
       transport: TransportState;
       recording: number;
+      /** Beats left of a take's count-in (0: none). */
+      countIn: number;
       looper?: LooperState;
       /** While the pitch tap is on: [position (samples), midi, level dB] per 5 ms reading. */
       pitch?: Float64Array;

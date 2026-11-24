@@ -124,9 +124,12 @@ class MicFxProcessor extends AudioWorkletProcessor {
         this.port.postMessage(reply);
         break;
       }
+      case "metronome":
+        this.session.metronome.set(message);
+        break;
       case "record": {
         if (message.on) {
-          this.session.startRecording(Boolean(message.dry));
+          this.session.startRecording(Boolean(message.dry), message.countIn ?? 0);
           break;
         }
         const end: FromWorklet = { type: "takeEnd", ...this.session.stopRecording() };
@@ -195,6 +198,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
         ...engine.takeMeters(),
         transport: { position: session.position / sampleRate, length: session.length / sampleRate, playing: session.playing },
         recording: session.recordingSeconds,
+        countIn: session.countInBeats,
         // The looper, with its layers' waveforms 5 times a second while it has a loop.
         ...(this.wantsStatus ? { looper: engine.looperState(++this.meterTicks % 6 === 0) } : {}),
         ...(this.wantsStatus ? { status: engine.status() } : {}),
