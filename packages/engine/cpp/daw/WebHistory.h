@@ -48,6 +48,9 @@ public:
     // Writes whatever is waiting (autosave, history) now.
     void flush();
 
+    // A file with the session as it is now (written first if it isn't saved anywhere yet).
+    juce::File currentSessionFile();
+
     // { savedAt, path, versions: [{ id, time, saved }] }
     juce::var describe() const;
     // Goes back to a version (one undo step). Returns an error, or empty.

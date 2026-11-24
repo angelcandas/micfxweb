@@ -159,9 +159,16 @@ bool WebHistory::followProject()
         {
             // The newest autosave is the session the person left (a tab doesn't close cleanly,
             // so the desktop would offer it as a crash recovery).
-            const auto backup = newestBackup (project.getBackupsFolder());
-            const auto savedTime = project.getFolder().getChildFile ("project.xml").getLastModificationTime().toMilliseconds();
-            if (backup.existsAsFile() && backupTime (backup) > savedTime)
+            // (When it did close cleanly, the newest autosave still wins if it's newer.)
+            auto backup = project.getRecoverableBackup();
+            if (! backup.existsAsFile())
+            {
+                const auto newest = newestBackup (project.getBackupsFolder());
+                const auto savedTime = project.getFolder().getChildFile ("project.xml").getLastModificationTime().toMilliseconds();
+                if (newest.existsAsFile() && backupTime (newest) > savedTime)
+                    backup = newest;
+            }
+            if (backup.existsAsFile())
             {
                 const juce::ScopedValueSetter<bool> quiet (applying, true);
                 project.restoreBackup (backup);
@@ -529,6 +536,17 @@ void WebHistory::addVersion (const juce::File& from, bool saved)
     auto versions = findVersions();
     for (int i = maxVersions; i < versions.size(); ++i)
         versions.getReference (i).deleteFile();
+}
+
+juce::File WebHistory::currentSessionFile()
+{
+    flush();
+    if (! project.hasUnsavedChanges())
+        return project.getFolder().getChildFile ("project.xml");
+
+    const juce::ScopedValueSetter<bool> backup (writingBackup, true);
+    project.writeBackup();
+    return newestBackup (project.getBackupsFolder());
 }
 
 juce::var WebHistory::describe() const

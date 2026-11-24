@@ -25,6 +25,8 @@
 #include "Presets.h"
 #include "FactoryChains.h"
 #include "WebHistory.h"
+#include "WebProject.h"
+#include "MidiMap.h"
 
 namespace juce { int wasmDispatchMessages (int maxMessages); }
 
@@ -205,6 +207,26 @@ struct Host
             bridge->newProject (folder);
         }
 
+        // MIDI learn (the desktop editor does the same): what's learned, and the actions only
+        // the page runs.
+        auto& map = processor->getMidiMap();
+        map.onLearned = [this] (const MidiMap::Mapping& m)
+        {
+            auto* learned = new juce::DynamicObject();
+            learned->setProperty ("target", m.target);
+            learned->setProperty ("name", MidiMap::describe (m));
+            learned->setProperty ("midi", describeMidi());
+            micfx_js_event ("midiLearned", toJson (juce::var (learned)).toRawUTF8());
+        };
+        map.onAction = [] (const juce::String& action) { micfx_js_event ("midiAction", toJson (action).toRawUTF8()); };
+        map.onDaw = [] (const juce::String& action, float value)
+        {
+            auto* event = new juce::DynamicObject();
+            event->setProperty ("action", action);
+            event->setProperty ("value", value);
+            micfx_js_event ("dawMidi", toJson (juce::var (event)).toRawUTF8());
+        };
+
         history = std::make_unique<WebHistory> (processor->getDawEdit(), project,
                                                 [] (const juce::String& event, const juce::var& payload)
                                                 { micfx_js_event (event.toRawUTF8(), toJson (payload).toRawUTF8()); });
@@ -327,6 +349,25 @@ struct Host
                 complete (history->describe());
             }
         }
+        else if (name == "webProject")
+        {
+            webProject (text (0), text (1), complete);
+        }
+        else if (name == "midi")
+        {
+            // (action, args) -> { mappings, learning, last }: "list", "learn" { target }, "cancel",
+            // "remove" { target }, "clear", "set" { mappings } (from MicFX Voice).
+            auto& map = processor->getMidiMap();
+            const auto action = text (0);
+            const auto options = arg (1);
+            if (action == "learn")  map.learn (options["target"].toString());
+            if (action == "cancel") map.learn ({});
+            if (action == "remove") map.removeTarget (options["target"].toString());
+            if (action == "clear")  map.clear();
+            if (action == "set" && options["mappings"].isArray())
+                map.setMappings (MidiMap::fromVar (options["mappings"]));
+            complete (describeMidi());
+        }
         else if (name == "loadPreset")
         {
             processor->setCurrentProgram ((int) arg (0));
@@ -336,6 +377,77 @@ struct Host
         {
             complete ({});
         }
+    }
+
+    // Desktop projects in and out (WebProject.h):
+    //   ["stage"] -> { ok, folder, name, files } (a desktop copy of the project now, in /tmp)
+    //   ["pack"]  -> { ok, path, name } (the same as one .micfxproj file)
+    //   ["unpack", path] -> { ok, folder } (into MicFX Projects, ready to open)
+    //   ["cleanup"] (removes what stage and pack left in /tmp)
+    void webProject (const juce::String& action, const juce::String& path, const std::function<void (const juce::var&)>& complete)
+    {
+        auto* result = new juce::DynamicObject();
+        const auto answer = [&] (const juce::Result& r)
+        {
+            result->setProperty ("ok", r.wasOk());
+            if (r.failed())
+                result->setProperty ("error", r.getErrorMessage());
+            complete (juce::var (result));
+        };
+        auto& project = processor->getDawProject();
+        const auto outFolder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("micfx-out");
+
+        if (action == "stage" || action == "pack")
+        {
+            if (! project.isOpen())
+                return answer (juce::Result::fail ("No project is open."));
+            juce::File staged;
+            if (auto r = webproject::stage (project.getFolder(), history->currentSessionFile(), staged); r.failed())
+                return answer (r);
+            result->setProperty ("name", project.getName());
+            if (action == "stage")
+            {
+                result->setProperty ("folder", staged.getFullPathName());
+                juce::Array<juce::var> files;
+                for (const auto& file : webproject::listFiles (staged))
+                    files.add (file);
+                result->setProperty ("files", files);
+                return answer (juce::Result::ok());
+            }
+            juce::File bundle;
+            const auto r = webproject::pack (staged, bundle);
+            staged.deleteRecursively();
+            result->setProperty ("path", bundle.getFullPathName());
+            return answer (r);
+        }
+        if (action == "unpack")
+        {
+            const auto projects = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("MicFX Projects");
+            juce::File folder;
+            const auto r = webproject::unpack (juce::File (path), projects, folder);
+            juce::File (path).deleteFile();
+            if (r.failed())
+                folder.deleteRecursively();
+            result->setProperty ("folder", folder.getFullPathName());
+            return answer (r);
+        }
+        if (action == "cleanup")
+        {
+            outFolder.deleteRecursively();
+            return answer (juce::Result::ok());
+        }
+        answer (juce::Result::fail ("Unknown action " + action));
+    }
+
+    juce::var describeMidi()
+    {
+        const auto& map = processor->getMidiMap();
+        auto* result = new juce::DynamicObject();
+        result->setProperty ("mappings", map.toVar());
+        result->setProperty ("learning", map.getLearnTarget());
+        result->setProperty ("last", map.getLastEvent());
+        result->setProperty ("count", map.getEventCount());
+        return juce::var (result);
     }
 
     void library (const juce::var& args, const std::function<void (const juce::var&)>& complete)

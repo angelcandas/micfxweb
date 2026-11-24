@@ -4,6 +4,7 @@
 import { JuceBackend, type ParameterInfo } from "@micfx/bridge";
 import { createChooser, download } from "./chooser";
 import { DawEngine } from "./engine";
+import { showMidiDevices, WebMidi } from "./midi";
 import { addAutosaveStatus, flushOnHide } from "./versions";
 import "./web.css";
 
@@ -12,7 +13,7 @@ const SOURCE = "https://github.com/angelcandas/micfxweb";
 const MANUAL = "https://github.com/angelcandas/local-mic-effects#readme";
 
 // Native functions answered by the engine (DawHost.cpp's Host::call).
-const ENGINE_FUNCTIONS = ["daw", "getParameterDefaults", "getParameterInfo", "getPresets", "uiPref", "library", "loadPreset"];
+const ENGINE_FUNCTIONS = ["daw", "getParameterDefaults", "getParameterInfo", "getPresets", "uiPref", "library", "loadPreset", "midi"];
 
 async function boot() {
   if (!crossOriginIsolated) throw new Error("This page needs cross-origin isolation (the DAW engine runs on threads).");
@@ -43,9 +44,16 @@ async function boot() {
   backend.install();
 
   let autosave: ReturnType<typeof addAutosaveStatus> | undefined;
+  const midi = new WebMidi(engine, flashMidi);
   engine.onEvent = (name, payload) => {
     if (name === "webSaved") { autosave?.saved((payload as { time: number }).time); return; }
     backend.emit(name, payload);
+    if (name === "dawStatus") midi.follow(payload as { playing?: boolean; position?: number });
+    if (name === "dawSession") {
+      const session = payload as { tempo?: number; tracks?: { kind?: string; arm?: boolean }[] };
+      midi.setTempo(session.tempo);
+      if (session.tracks?.some((t) => t.kind === "midi" && t.arm)) void midi.start();
+    }
     if (name === "dawExport") void downloadExport(engine, payload as { done?: boolean; files?: string[]; error?: string });
     if (name === "dawSession") void followArming(engine, payload as { tracks?: { arm?: boolean }[] });
   };
@@ -73,7 +81,12 @@ async function boot() {
   const title = document.querySelector(".app-title");
   if (title) title.textContent = "MicFX DAW";
   addSourceLink();
-  autosave = addAutosaveStatus(engine);
+  autosave = addAutosaveStatus(engine, [
+    { label: "MIDI devices…", hint: "Keyboards and controllers to play with, and where to send MIDI clock", action: () => showMidiDevices(midi) },
+  ]);
+  // MIDI learn and MIDI tracks need MIDI: asked for when the MIDI button is first used.
+  document.querySelector(".midi-button")?.addEventListener("click", () => void midi.start(), { capture: true });
+  void midi.startIfAllowed();
   flushOnHide(engine);
 
   // Browsers start sound only after a click or a key.
@@ -84,6 +97,19 @@ async function boot() {
   window.addEventListener("pointerdown", resume, { capture: true });
   window.addEventListener("keydown", resume, { capture: true });
   if (!engine.persistent) console.warn("MicFX DAW: this browser has no private file storage; projects last until the tab closes.");
+}
+
+// The MIDI button's activity light (the desktop sets it from its status event).
+let flashTimer = 0;
+function flashMidi() {
+  const now = performance.now();
+  if (now - flashTimer < 120) return;
+  flashTimer = now;
+  const button = document.querySelector(".midi-button");
+  if (!button) return;
+  button.classList.remove("is-receiving");
+  void (button as HTMLElement).offsetWidth;
+  button.classList.add("is-receiving");
 }
 
 // Rendered files (Export, Bounce to file) go to the computer as downloads.

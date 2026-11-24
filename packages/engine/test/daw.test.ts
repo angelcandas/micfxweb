@@ -15,6 +15,7 @@ interface DawModule {
 let m: DawModule;
 const pending = new Map<number, (value: unknown) => void>();
 const events: string[] = [];
+const exportEvents: { progress?: number; done?: boolean; cancelled?: boolean; error?: string; files?: string[] }[] = [];
 let nextId = 1;
 let timers: ReturnType<typeof setInterval>[] = [];
 
@@ -40,7 +41,7 @@ beforeAll(async () => {
   const { default: createDawModule } = await import(/* @vite-ignore */ url);
   m = await createDawModule({
     onDawComplete: (id: number, json: string) => { pending.get(id)?.(JSON.parse(json)); pending.delete(id); },
-    onDawEvent: (name: string) => events.push(name),
+    onDawEvent: (name: string, json: string) => { events.push(name); if (name === "dawExport") exportEvents.push(JSON.parse(json)); },
     onDawChooser: () => {},
     onDawClipboard: () => {},
     print: () => {},
@@ -143,6 +144,50 @@ describe("daw.wasm", () => {
     expect((await call("webHistory", ["restore", saved.id])).ok).toBe(true);
     expect(await names()).not.toContain("Later");
     expect(await names()).toContain("Keep A");
+  });
+
+  it("packs the project as a desktop project and unpacks it", async () => {
+    const staged = await call("webProject", ["stage"]);
+    expect(staged.ok).toBe(true);
+    expect(staged.files).toContain("project.xml");
+    expect(staged.files.some((f: string) => f.startsWith("Audio/") && f.endsWith(".wav"))).toBe(true);
+
+    const packed = await call("webProject", ["pack"]);
+    expect(packed.ok).toBe(true);
+    expect(packed.path).toMatch(/Test Song\.micfxproj$/);
+    const unpacked = await call("webProject", ["unpack", packed.path]);
+    expect(unpacked.ok).toBe(true);
+    expect(unpacked.folder).toBe("/home/web/Documents/MicFX Projects/Test Song.micfx");
+    const listed = m.ccall("micfx_daw_list", "number", ["string"], [unpacked.folder]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const names = (JSON.parse((m as any).UTF8ToString(listed)) as { name: string }[]).map((e) => e.name);
+    m._free(listed);
+    expect(names).toEqual(expect.arrayContaining(["project.xml", "Audio"]));
+    expect(names).not.toContain("History");
+    expect((await call("webProject", ["cleanup"])).ok).toBe(true);
+  });
+
+  it.each(["wav", "flac", "mp3"])("exports the mix as %s in the background, with progress", async (format) => {
+    exportEvents.length = 0;
+    const started = await daw("export", { kind: "mix", format, folder: "/home/web/Music/Exports", name: `Mix ${format}`, overwrite: true });
+    expect(started.ok).toBe(true);
+    for (let i = 0; i < 300 && !exportEvents.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 50));
+    const done = exportEvents.find((e) => e.done)!;
+    expect(done.error || "").toBe("");
+    expect(done.files?.[0]).toBe(`/home/web/Music/Exports/Mix ${format}.${format}`);
+    const size = m.ccall("micfx_daw_list", "number", ["string"], ["/home/web/Music/Exports"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = (JSON.parse((m as any).UTF8ToString(size)) as { name: string; size: number }[]).find((e) => e.name === `Mix ${format}.${format}`);
+    m._free(size);
+    expect(entry?.size).toBeGreaterThan(format === "wav" ? 100_000 : 5_000);
+  });
+
+  it("cancels an export", async () => {
+    exportEvents.length = 0;
+    await daw("export", { kind: "mix", format: "wav", folder: "/home/web/Music/Exports", name: "Cancelled", overwrite: true });
+    await daw("cancelExport");
+    for (let i = 0; i < 300 && !exportEvents.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(exportEvents.find((e) => e.done)).toBeTruthy();
   });
 
   it("sends the session and status to the page", () => {

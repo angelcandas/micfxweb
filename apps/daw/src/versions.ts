@@ -3,6 +3,7 @@
 // minutes and on each save, and keeps the undo history across reloads.
 import { el } from "./chooser";
 import type { DawEngine } from "./engine";
+import { canSaveToFolder, downloadProject, saveToFolder } from "./projects";
 
 interface Version { id: string; time: number; saved: boolean }
 interface History { savedAt: number; path: string; unsaved: boolean; versions: Version[] }
@@ -20,11 +21,14 @@ function when(time: number) {
 }
 
 /** "Saved just now" next to the project name, which opens the versions. */
-export function addAutosaveStatus(engine: DawEngine) {
+export interface MenuItem { label: string; hint: string; action: () => Promise<unknown> }
+
+export function addAutosaveStatus(engine: DawEngine, extras: MenuItem[] = []) {
   const button = el("button", "web-saved", "Versions");
   button.type = "button";
-  button.title = "Your work is kept in this browser a second after each change. Click to go back to an earlier version.";
-  button.addEventListener("click", () => void showVersions(engine));
+  button.title = "Your work is kept in this browser a second after each change. Click for versions, and to take the project to your computer.";
+  button.setAttribute("aria-haspopup", "menu");
+  button.addEventListener("click", () => openMenu(engine, button, (text) => { button.textContent = text; }, extras));
   const place = document.querySelector(".app-project");
   place?.append(el("span", "web-saved-dot", " · "), button);
 
@@ -108,4 +112,44 @@ export function flushOnHide(engine: DawEngine) {
   const flush = () => void history(engine, ["flush"]).catch(() => {});
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
   window.addEventListener("pagehide", flush);
+}
+
+/** The project's place: versions, and the project as a desktop project on the computer. */
+function openMenu(engine: DawEngine, anchor: HTMLElement, say: (text: string) => void, extras: MenuItem[]) {
+  document.querySelector(".web-menu")?.remove();
+  const menu = el("div", "web-menu");
+  menu.setAttribute("role", "menu");
+  const box = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - 300))}px`;
+  menu.style.top = `${box.bottom + 6}px`;
+  const close = () => { menu.remove(); document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", onKey, true); };
+  const away = (event: Event) => { if (!menu.contains(event.target as Node)) close(); };
+  const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); close(); } };
+  const item = (label: string, hint: string, action: () => Promise<unknown>) => {
+    const row = el("button", "web-menu-item");
+    row.type = "button";
+    row.setAttribute("role", "menuitem");
+    row.append(el("span", "", label), el("span", "web-menu-hint", hint));
+    row.addEventListener("click", () => {
+      close();
+      action().catch((error) => say(error instanceof Error ? error.message : String(error)));
+    });
+    menu.append(row);
+  };
+  item("Versions…", "Go back to an earlier version of this project", () => showVersions(engine));
+  item("Download project (.micfxproj)", "One file with the project and its audio: open it here or in the desktop app", async () => {
+    say("Packing the project…");
+    await downloadProject(engine);
+    say("Project downloaded");
+  });
+  if (canSaveToFolder())
+    item("Save to a folder on your computer…", "As a desktop project folder (Name.micfx) that MicFX on your computer opens", async () => {
+      const saved = await saveToFolder(engine);
+      if (saved) say(`Saved as ${saved}`);
+    });
+  for (const extra of extras) item(extra.label, extra.hint, extra.action);
+  document.body.append(menu);
+  document.addEventListener("pointerdown", away, true);
+  document.addEventListener("keydown", onKey, true);
+  (menu.firstElementChild as HTMLElement | null)?.focus();
 }

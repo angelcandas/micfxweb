@@ -1,16 +1,56 @@
 diff --git a/juce_core/native/juce_SystemStats_wasm.cpp b/juce_core/native/juce_SystemStats_wasm.cpp
-index 197e167..90ec567 100644
+index 197e167..0474310 100644
 --- a/juce_core/native/juce_SystemStats_wasm.cpp
 +++ b/juce_core/native/juce_SystemStats_wasm.cpp
-@@ -32,6 +32,8 @@
+@@ -32,6 +32,11 @@
    ==============================================================================
  */
  
 +#include <emscripten.h>
++#ifdef __EMSCRIPTEN_PTHREADS__
++ #include <emscripten/threading.h>
++#endif
 +
  namespace juce
  {
  
+@@ -61,14 +66,26 @@ String SystemStats::getDisplayLanguage()        { return {}; }
+ //==============================================================================
+ void CPUInformation::initialise() noexcept
+ {
++   #ifdef __EMSCRIPTEN_PTHREADS__
++    numLogicalCPUs = numPhysicalCPUs = jmax (1, emscripten_num_logical_cores());
++   #else
+     numLogicalCPUs = 1;
+     numPhysicalCPUs = 1;
++   #endif
+ }
+ 
+ //==============================================================================
++// With threads, emscripten_get_now() counts from the epoch (the same clock in every worker),
++// which doesn't fit in 32 bits: count from the first call instead, as the other platforms do.
++static double wasmStartupMilliseconds() noexcept
++{
++    static const double start = emscripten_get_now();
++    return start;
++}
++
+ uint32 juce_millisecondsSinceStartup() noexcept
+ {
+-    return static_cast<uint32> (emscripten_get_now());
++    return static_cast<uint32> (emscripten_get_now() - wasmStartupMilliseconds());
+ }
+ 
+ int64 Time::getHighResolutionTicks() noexcept
+@@ -83,7 +100,7 @@ int64 Time::getHighResolutionTicksPerSecond() noexcept
+ 
+ double Time::getMillisecondCounterHiRes() noexcept
+ {
+-    return emscripten_get_now();
++    return emscripten_get_now() - wasmStartupMilliseconds();
+ }
+ 
+ bool Time::setSystemTimeToThisTime() const
 diff --git a/juce_core/native/juce_ThreadPriorities_native.h b/juce_core/native/juce_ThreadPriorities_native.h
 index 55f630a..1fefab6 100644
 --- a/juce_core/native/juce_ThreadPriorities_native.h

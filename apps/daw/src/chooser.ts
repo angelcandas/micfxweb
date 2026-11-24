@@ -3,6 +3,7 @@
 // in first, and what the DAW exports is downloaded.
 import type { DawEngine } from "./engine";
 import type { ChooserRequest, FileEntry } from "./protocol";
+import { pickProject } from "./projects";
 
 const extensions = (patterns: string) =>
   patterns.split(/[;,\s]+/).map((p) => p.trim().replace(/^\*/, "")).filter((p) => p.startsWith("."));
@@ -92,6 +93,16 @@ function storageDialog(engine: DawEngine, request: ChooserRequest): Promise<stri
     const fromComputer = el("button", "web-dialog-secondary", "From your computer…");
     fromComputer.type = "button";
     fromComputer.hidden = request.save || (request.folders && !request.files);
+    // Opening a project: a desktop project folder or a .micfxproj file from the computer.
+    const isProject = !request.save && extensions(request.patterns).includes(".micfx");
+    const projectFolder = el("button", "web-dialog-secondary", "Project folder…");
+    projectFolder.type = "button";
+    projectFolder.title = "A MicFX project folder (Name.micfx) from your computer, e.g. one made by the desktop app";
+    const projectFile = el("button", "web-dialog-secondary", ".micfxproj file…");
+    projectFile.type = "button";
+    projectFile.title = "A project saved as one file (Download project)";
+    projectFolder.hidden = projectFile.hidden = !isProject;
+    if (isProject) fromComputer.hidden = true;
     const newFolder = el("button", "web-dialog-secondary", "New folder");
     newFolder.type = "button";
     newFolder.hidden = !request.save && !request.folders;
@@ -99,7 +110,7 @@ function storageDialog(engine: DawEngine, request: ChooserRequest): Promise<stri
     cancel.type = "button";
     const ok = el("button", "web-dialog-primary", request.save ? "Save" : "Open");
     ok.type = "button";
-    buttons.append(fromComputer, newFolder, el("span", "web-dialog-gap"), cancel, ok);
+    buttons.append(fromComputer, projectFolder, projectFile, newFolder, el("span", "web-dialog-gap"), cancel, ok);
     dialog.append(title, where, list, nameRow, note, buttons);
     backdrop.append(dialog);
     document.body.append(backdrop);
@@ -142,7 +153,7 @@ function storageDialog(engine: DawEngine, request: ChooserRequest): Promise<stri
           else confirm();
         });
         return row;
-      }) : [el("div", "web-dialog-empty", request.save ? "Nothing here yet." : "Nothing here yet. Use “From your computer…” to bring files in.")]));
+      }) : [el("div", "web-dialog-empty", request.save ? "Nothing here yet." : isProject ? "Nothing here yet. Bring a project from your computer with “Project folder…” or “.micfxproj file…”." : "Nothing here yet. Use “From your computer…” to bring files in.")]));
     };
 
     const confirm = () => {
@@ -175,6 +186,17 @@ function storageDialog(engine: DawEngine, request: ChooserRequest): Promise<stri
       const files = await pickFromComputer(wanted, request.multiple);
       if (files.length) finish(await importFiles(engine, files));
     });
+
+    for (const [button, kind] of [[projectFolder, "folder"], [projectFile, "bundle"]] as const) {
+      button.addEventListener("click", async () => {
+        try {
+          const path = await pickProject(engine, kind);
+          if (path) finish([path]);
+        } catch (error) {
+          note.textContent = error instanceof Error ? error.message : String(error);
+        }
+      });
+    }
 
     void engine.mkdir(folder).then(render);
     (request.save ? nameInput : ok).focus();
