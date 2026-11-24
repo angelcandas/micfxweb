@@ -9,7 +9,8 @@ import type { LiveEngine } from "@micfx/engine";
 import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
-import { Tracks, encodeWav, download } from "./tracks";
+import { Tracks, encodeWav, download, songFiles } from "./tracks";
+import { Setlist } from "./setlist";
 import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
@@ -22,6 +23,7 @@ const SESSION_SAVE_MS = 400;
 const RECORD_DRY_PREF = "micfx.record.dry";
 const MIDI_KEY = "micfx.midi";
 const LOOPER_KEY = "micfx.looper";
+const SETLIST_KEY = "micfx.setlist";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -73,6 +75,14 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     } catch {
       // not kept
     }
+  };
+
+  const setLooper = (settings: { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }) => {
+    for (const [key, value] of Object.entries(settings)) if (value !== undefined) (looperPrefs as Record<string, unknown>)[key] = value;
+    shadow.looperSettings(settings);
+    audio.looperSettings(settings);
+    looperState = { ...looperState, ...Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined)) };
+    saveLooperPrefs();
   };
 
   // The last session (values, order, preset) comes back, as the desktop app's state does.
@@ -166,6 +176,80 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   }));
   // Allowed on an earlier visit: listen from the start, so mapped pedals just work.
   if (midiMap.getMappings().length) void midiAlreadyAllowed().then((yes) => yes && connectMidiOnce());
+
+  // The setlist: kept in this browser, saved and opened as .micfxset files.
+  const setlist = new Setlist({
+    params: access,
+    getOrder: () => shadow.getOrder().join(","),
+    setOrder: (order) => {
+      shadow.setOrder(order ? order.split(",") : []);
+      audio.setOrder(shadow.getOrder());
+      emitOrderIfChanged();
+      saveSoon();
+    },
+    scenes,
+    looper: () => looperState,
+    looperStop: () => audio.looper("stop"),
+    looperTempo: (bpm) => setLooper({ bpm, locked: true }),
+    currentBacking: () => tracks.currentBacking(),
+    replaceBacking: async (file) => {
+      transport = { ...transport, position: 0, playing: false };
+      audio.transport("stop", 0);
+      await tracks.replaceBacking(file);
+    },
+    files: songFiles(),
+    persist: (saved) => {
+      try {
+        storage()?.setItem(SETLIST_KEY, JSON.stringify(saved));
+      } catch {
+        backend?.emit("trackError", "This browser has no room left to keep the setlist: save it as a file.");
+      }
+    },
+    label: (name) => history.label(name),
+  });
+  try {
+    setlist.restore(JSON.parse(storage()?.getItem(SETLIST_KEY) ?? "null"));
+  } catch {
+    // a broken entry: an empty setlist
+  }
+  const describeSetlist = (warning = "", error = "") => ({ ...setlist.describe(), available: true, recent: [], warning, error });
+
+  const handleSetlist = async (action: string, options: Record<string, unknown>) => {
+    const index = typeof options.index === "number" ? options.index : -1;
+    if (action === "add") await setlist.add(String(options.name ?? ""));
+    if (action === "update") await setlist.update(index);
+    if (action === "remove") setlist.remove(index);
+    if (action === "move") setlist.move(index, typeof options.to === "number" ? options.to : index);
+    if (action === "info") setlist.setInfo(index, options);
+    if (action === "new") setlist.clear();
+    if (action === "load" || action === "step") {
+      // A song change replaces the backing track, so it waits while a take is recording.
+      if (recording) return describeSetlist("", "Stop recording before changing songs.");
+      const { warning } = action === "load" ? await setlist.load(index) : await setlist.step(typeof options.delta === "number" ? options.delta : 1);
+      syncPage();
+      return describeSetlist(warning);
+    }
+    if (action === "save" || action === "saveAs") {
+      download(new Blob([setlist.toFile()], { type: "application/xml" }), `${setlist.name}.micfxset`);
+    }
+    if (action === "open") {
+      const file = await pickFile(".micfxset,application/xml,text/xml");
+      if (file) {
+        const error = setlist.open(await file.text(), file.name);
+        if (error) return describeSetlist("", error);
+      }
+    }
+    if (action === "chooseBacking" && setlist.song(index)) {
+      const file = await pickFile("audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a");
+      if (file) await setlist.setBacking(index, file);
+    }
+    if (action === "chooseLyrics" && setlist.song(index)) {
+      const file = await pickFile(".txt,.lrc,text/plain");
+      if (file && file.size > 200000) return describeSetlist("", "That file is too big for lyrics.");
+      if (file) setlist.setInfo(index, { lyrics: await file.text() });
+    }
+    return describeSetlist();
+  };
 
   /** Every parameter, as the shadow engine has them. */
   const allValues = () => Object.fromEntries(ids.map((id) => [id, shadow.getValue(id) ?? parameters[id]!.default]));
@@ -432,19 +516,13 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         if (layer.gain !== undefined) looperState.gains[options.layer] = layer.gain;
         if (layer.muted !== undefined) looperState.mutes[options.layer] = layer.muted;
       }
-      if (action === "settings") {
-        const settings = {
+      if (action === "settings")
+        setLooper({
           bpm: typeof options.bpm === "number" ? options.bpm : undefined,
           beatsPerBar: typeof options.beatsPerBar === "number" ? options.beatsPerBar : undefined,
           locked: typeof options.locked === "boolean" ? options.locked : undefined,
           volume: typeof options.volume === "number" ? Math.min(2, Math.max(0, options.volume)) : undefined,
-        };
-        for (const [key, value] of Object.entries(settings)) if (value !== undefined) (looperPrefs as Record<string, unknown>)[key] = value;
-        shadow.looperSettings(settings);
-        audio.looperSettings(settings);
-        looperState = { ...looperState, ...Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined)) };
-        saveLooperPrefs();
-      }
+        });
       if (action === "save") {
         const { layers, sampleRate } = await audio.looperLayers();
         if (!layers.length) return { ok: false, error: "Record a loop first.", files: [], folder: "" };
@@ -469,7 +547,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     },
     liveMacros: () => null,
     scenes: (action = "list", options?: Record<string, unknown>) => scenes.handle(String(action), options ?? {}),
-    setlist: () => null,
+    setlist: (action = "list", options?: Record<string, unknown>) => handleSetlist(String(action), options ?? {}),
     library,
     midi: async (action = "list", options?: { target?: string }) => {
       const target = String(options?.target ?? "");
@@ -519,6 +597,16 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       tick();
     },
   };
+}
+
+/** Asks for a file (a click); undefined when none was picked. */
+function pickFile(accept: string): Promise<File | undefined> {
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept });
+    input.addEventListener("change", () => resolve(input.files?.[0]));
+    input.addEventListener("cancel", () => resolve(undefined));
+    input.click();
+  });
 }
 
 function readDry(): boolean {

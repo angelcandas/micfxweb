@@ -87,7 +87,7 @@ test("load a song, record over it, and keep both", async ({ page }) => {
   // The take is the voice all the way through, kept in the browser as a WAV.
   const take = await page.evaluate(async () => {
     const db: IDBDatabase = await new Promise((resolve) => {
-      const open = indexedDB.open("micfx-voice", 1);
+      const open = indexedDB.open("micfx-voice");
       open.onsuccess = () => resolve(open.result);
     });
     const tracks: { isTake: boolean; audio: Blob }[] = await new Promise((resolve) => {
