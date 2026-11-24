@@ -333,3 +333,39 @@ MICFX_EXPORT int micfx_offer_noise_profile (Instance* instance, const float* bin
         return denoise->offerProfile (std::vector<float> (bins, bins + count)) ? 1 : 0;
     return 0;
 }
+
+//==============================================================================
+// The Practice view's pitch tap (the desktop's PitchTap): on or off, where the timeline is
+// (before each block), and the readings since the last call: micfx_pitch_read returns their
+// count, and micfx_pitch_readings points to [position (samples), midi, level dB] doubles.
+namespace
+{
+std::vector<PitchTap::Reading> pitchReadings;
+std::vector<double> pitchOut;
+}
+
+MICFX_EXPORT void micfx_pitch_enable (Instance* instance, int on)
+{
+    instance->engine.getPitchTap().setEnabled (on != 0);
+}
+
+MICFX_EXPORT void micfx_set_timeline (Instance* instance, double position)
+{
+    instance->engine.setTimelinePosition ((juce::int64) position);
+}
+
+MICFX_EXPORT int micfx_pitch_read (Instance* instance)
+{
+    pitchReadings.clear();
+    instance->engine.getPitchTap().read (pitchReadings);
+    pitchOut.resize (pitchReadings.size() * 3);
+    for (size_t i = 0; i < pitchReadings.size(); ++i)
+    {
+        pitchOut[i * 3] = (double) pitchReadings[i].position;
+        pitchOut[i * 3 + 1] = pitchReadings[i].midi;
+        pitchOut[i * 3 + 2] = pitchReadings[i].levelDb;
+    }
+    return (int) pitchReadings.size();
+}
+
+MICFX_EXPORT const double* micfx_pitch_readings() { return pitchOut.data(); }

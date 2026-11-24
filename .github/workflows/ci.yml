@@ -96,9 +96,10 @@ jobs:
           # The domain: the VOICE_DOMAIN variable, or micfxvoice.<the account's sobrinotech zone>.
           if [ -z "$DOMAIN" ]; then
             zones="$(cf "https://api.cloudflare.com/client/v4/zones?account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=50" \
-                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
-            echo "Zones this token sees: ${zones:-none (it may lack Zone: Read)}"
+                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -E '^[a-z0-9.-]+\.[a-z]+$' || true)"
+            # (only domain names: the account's own name is left out of the log)
             zone="$(printf '%s\n' "$zones" | grep -E '^sobrinotech\.' | head -n 1 || true)"
+            echo "The sobrinotech zone: ${zone:-not found (the token may lack Zone: Read)}"
             [ -n "$zone" ] && DOMAIN="$PROJECT.$zone"
           fi
           if [ -z "$DOMAIN" ]; then

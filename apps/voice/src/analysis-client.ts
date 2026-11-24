@@ -1,5 +1,6 @@
 // The page's side of analysis-worker.ts: one worker, started the first time it's needed.
-import type { FitChain, SoundCheckPlan } from "@micfx/engine/analysis";
+import { Analysis, type FitChain, type SoundCheckPlan } from "@micfx/engine/analysis";
+import analysisUrl from "@micfx/engine/analysis.wasm?url";
 import type { AnalysisReply, AnalysisRequest } from "./analysis-worker";
 import AnalysisWorker from "./analysis-worker?worker";
 
@@ -29,4 +30,25 @@ export async function soundCheckPlan(mono: Float32Array, sampleRate: number, opt
   if ("error" in reply) throw new Error(reply.error);
   if (!("plan" in reply)) throw new Error("no plan");
   return reply.plan;
+}
+
+/** Practice: the melody in a voice (and the key, from the backing when there is one). */
+export async function findMelody(voice: Float32Array, sampleRate: number, keyAudio?: Float32Array): Promise<{ melody: string; key: string }> {
+  const transfer = [voice.buffer as ArrayBuffer, ...(keyAudio ? [keyAudio.buffer as ArrayBuffer] : [])];
+  const reply = await call({ kind: "melody", voice, sampleRate, keyAudio }, transfer);
+  if ("error" in reply) throw new Error(reply.error);
+  if (!("melody" in reply)) throw new Error("no melody");
+  return { melody: reply.melody, key: reply.key };
+}
+
+let onPage: Promise<Analysis> | undefined;
+
+/** A copy of the analysis on the page itself, for quick calls every frame (Practice scoring). */
+export function pageAnalysis(): Promise<Analysis> {
+  onPage ??= (async () => {
+    const response = await fetch(analysisUrl);
+    if (!response.ok) throw new Error(`Couldn't load the analysis (${response.status})`);
+    return new Analysis(await WebAssembly.compile(await response.arrayBuffer()));
+  })();
+  return onPage;
 }

@@ -9,10 +9,11 @@ import type { LiveEngine } from "@micfx/engine";
 import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
-import { Tracks, encodeWav, download, songFiles } from "./tracks";
+import { Tracks, decodeMono, encodeWav, download, songFiles } from "./tracks";
 import { Setlist } from "./setlist";
 import { SoundCheck } from "./sound-check";
-import { soundCheckPlan } from "./analysis-client";
+import { findMelody, pageAnalysis, soundCheckPlan } from "./analysis-client";
+import { Practice, opfsStore } from "./practice";
 import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
@@ -26,6 +27,7 @@ const RECORD_DRY_PREF = "micfx.record.dry";
 const MIDI_KEY = "micfx.midi";
 const LOOPER_KEY = "micfx.looper";
 const SETLIST_KEY = "micfx.setlist";
+const PRACTICE_KEY = "micfx.practice";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -272,6 +274,43 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     sceneName: (index) => scenes.describe().scenes[index]?.name ?? "",
     onChange: (state) => backend?.emit("soundCheck", state),
   });
+  // Practice: songs kept in this browser's private files, scored against the pitch tap.
+  let practiceOn = false;
+  const practice = new Practice({
+    store: opfsStore(),
+    scorer: pageAnalysis,
+    decode: decodeMono,
+    findMelody,
+    pickFile,
+    install: async (guide, backing, level) => {
+      transport = { ...transport, position: 0, playing: false };
+      audio.transport("stop", 0);
+      await tracks.replaceBacking(undefined);
+      if (backing) await tracks.addBackingTrack(backing);
+      return tracks.addBackingTrack(guide, { gain: level, muted: level <= 0 });
+    },
+    setGuide: (id, level) => tracks.set(id, { gain: level, muted: level <= 0 }),
+    trackIds: () => tracks.rows().map((row) => row.id),
+    restart: () => {
+      transport = { ...transport, position: 0, playing: false };
+      audio.transport("stop", 0);
+    },
+    pitch: (on) => {
+      practiceOn = on;
+      audio.pitch(on);
+    },
+    latency: () => describeAudio().latencyMs / 1000,
+    emit: (name, payload) => backend?.emit(name, payload),
+    load: () => storage()?.getItem(PRACTICE_KEY) ?? null,
+    save: (value) => {
+      try {
+        storage()?.setItem(PRACTICE_KEY, value);
+      } catch {
+        // not kept
+      }
+    },
+  });
+
   audio.onMicChunk = (samples) => {
     // As the desktop captures it: after the input gain.
     const gain = Math.pow(10, access.get("inputGain") / 20);
@@ -317,6 +356,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         pushToAudio();
         audio.wantStatus(true);
         audio.looperSettings(looperPrefs);
+        audio.pitch(practiceOn);
         transport = { ...transport, playing: false };
         await tracks.pushAll();
         audio.transport("seek", transport.position);
@@ -351,6 +391,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     if (meters.transport) transport = meters.transport;
     if (meters.looper) looperState = { ...meters.looper, overviews: meters.looper.overviews ?? looperState.overviews };
     if ("status" in meters && meters.status) status = meters.status as unknown as Record<string, unknown>;
+    if (meters.transport) practice.tick(meters.pitch, meters.transport, audio.sampleRate ?? 48000);
   };
 
   const describeAudio = () => {
@@ -531,7 +572,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     // isn't there (no DAW session, no song): the panels then stay empty.
     soundCheck: (action = "state", options?: Record<string, unknown>) => soundCheck.handle(String(action), options ?? {}),
     daw: () => null,
-    practice: () => null,
+    practice: (action = "state", options?: Record<string, unknown>) => practice.handle(String(action), options ?? {}),
     looper: async (action = "status", options: Record<string, unknown> = {}) => {
       const commands = ["main", "stop", "play", "undo", "redo", "clear"] as const;
       const command = commands.find((c) => c === action);
@@ -602,7 +643,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   };
 
   restore();
-  void tracks.restore();
+  void tracks.restore().then(() => practice.restore());
 
   return {
     functions,
