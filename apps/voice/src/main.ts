@@ -6,6 +6,8 @@ import { createShadowEngine, LiveAudio } from "./audio";
 import { createNative } from "./native";
 import { addMetronome } from "./metronome-ui";
 import { addShowMode } from "./show-mode";
+import { addAccessibility } from "./a11y";
+import { addMicHelp } from "./mic-help";
 import { addTabAudioNote } from "./tab-audio";
 import { addVideo } from "./video";
 import { registerOffline } from "./update";
@@ -52,6 +54,8 @@ async function boot() {
   addShowMode();
   addVideo(native.web);
   addTabAudioNote();
+  addMicHelp();
+  addAccessibility();
   native.started();
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));

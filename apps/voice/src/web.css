@@ -79,3 +79,32 @@ body[data-platform="web"] .computer-hint { display: none; }
 /* The recorder's row carries the web's own controls too (click, video, tab): it wraps on
    narrower windows rather than pushing the status and the tracks toggle out of sight. */
 body[data-platform="web"] .recorder .transport { flex-wrap: wrap; row-gap: 6px; }
+
+/* Microphone permission help on the first-run card (mic-help.ts). */
+.web-mic-help { display: grid; gap: 6px; justify-items: start; margin: 0 0 10px 28px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 107, 107, 0.35); background: rgba(255, 107, 107, 0.08); font-size: 13px; }
+.web-mic-help[hidden] { display: none; }
+.web-mic-help p { margin: 0; line-height: 1.45; }
+.web-mic-help .web-mic-system { color: var(--muted, #8b93a7); font-size: 12px; }
+
+/* Accessibility (a11y.ts). Keyboard focus: a clear ring on every control. */
+body[data-platform="web"] :is(button, a, input, select, textarea, [role="slider"], [tabindex]):focus-visible {
+  outline: 2px solid #b9adff; outline-offset: 2px;
+}
+/* The app's name stays as the page's heading on narrow windows (the desktop hides it), read
+   out but not shown; the source link beside it is in the foot too. */
+@media (max-width: 1320px) {
+  body[data-platform="web"] .brand > div {
+    display: block !important; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  body[data-platform="web"] .brand .app-project { display: none; }
+}
+/* High contrast: brighter text and lines. */
+body.web-contrast {
+  --text: #ffffff; --muted: #c9d0df; --faint: #a3acc0; --line: #59627a; --line-strong: #8590aa; --panel: #0e1016; --panel-raised: #151925; --bg: #000000;
+}
+body.web-contrast :is(.tool, .pill, .dropdown, .icon-button, .mini, input, select) { border-color: var(--line-strong) !important; }
+body.web-contrast .web-source { text-decoration-color: currentColor; }
+/* Reduce motion: no animations, slides or smooth scrolling. */
+body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-motion *::after {
+  animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+}
