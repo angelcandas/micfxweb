@@ -108,3 +108,67 @@ body.web-contrast .web-source { text-decoration-color: currentColor; }
 body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-motion *::after {
   animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important;
 }
+
+/* Narrow windows and tablets: the desktop hides the view chips (Looper, Practice…) below
+   1040 px; here they wrap to their own row and scroll sideways instead. */
+@media (max-width: 1040px) {
+  body[data-platform="web"] .topbar { flex-wrap: wrap; row-gap: 8px; }
+  body[data-platform="web"] .chips { flex: 1 1 100%; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  body[data-platform="web"] .chips .chip:not([hidden]):not(.fullscreen-button):not(.inst-toggle-chip) { display: inline-flex; flex: none; }
+}
+
+/* ---------- Phones (phone.ts): one column, the effect list as a sheet ---------- */
+.web-fx-sheet-button, .web-fx-sheet-close, .web-fx-sheet-backdrop { display: none; }
+@media (max-width: 760px) {
+  body[data-platform="web"] {
+    --knob-size: 64px;
+    height: auto; min-height: 100%; overflow: visible; gap: 10px; padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
+  }
+  /* The bar: the preset on one row, the views (Looper, Practice…) scrolling on the next. */
+  body[data-platform="web"] .topbar { flex-wrap: wrap; gap: 8px; }
+  body[data-platform="web"] .preset-bar { flex: 1 1 0; min-width: 0; }
+  body[data-platform="web"] .preset-button { width: auto; flex: 1 1 auto; min-width: 0; }
+  /* The workspace: levels in a row, then the cards. */
+  body[data-platform="web"] .workspace { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  body[data-platform="web"] .levels { order: -1; flex-direction: row; padding: 8px; overflow: visible; }
+  body[data-platform="web"] .level {
+    flex: 1 1 0; min-width: 0; display: grid; grid-template-columns: 14px auto minmax(0, 1fr); align-items: center; align-content: start; gap: 6px 8px;
+  }
+  body[data-platform="web"] .level h2 { writing-mode: vertical-rl; transform: rotate(180deg); }
+  body[data-platform="web"] .level .meter { height: 84px; min-height: 0; }
+  body[data-platform="web"] .level .level-button { grid-column: 1 / -1; min-height: 38px; width: 100%; }
+  body[data-platform="web"] .level .limiter-note { grid-column: 1 / -1; }
+  body[data-platform="web"] .chain { overflow: visible; padding: 8px; }
+  body[data-platform="web"] .chain-grid { grid-template-columns: minmax(0, 1fr); }
+  body[data-platform="web"] .chain-grid > .live-card.is-wide { grid-column: auto; }
+  body[data-platform="web"] .scene-bar { position: static; flex-wrap: wrap; margin: -8px -8px 8px; padding: 8px; }
+  body[data-platform="web"] .web-fx-sheet-button { display: block; width: 100%; margin-bottom: 8px; height: 40px; font-size: 14px; }
+  /* The effect list slides up from the bottom. */
+  body[data-platform="web"] nav.sidebar {
+    position: fixed; inset: auto 0 0 0; z-index: 60; height: min(78vh, 640px); border-radius: 16px 16px 0 0;
+    background: #13161e; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.55);
+    transform: translateY(105%); transition: transform 0.22s ease-out; visibility: hidden;
+  }
+  body.web-fx-sheet-open[data-platform="web"] nav.sidebar { transform: none; visibility: visible; }
+  body[data-platform="web"] .web-fx-sheet-close { display: inline-flex; margin-left: 10px; }
+  body.web-fx-sheet-open[data-platform="web"] .web-fx-sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 59; background: rgba(4, 6, 10, 0.55); }
+  body[data-platform="web"] .sidebar-groups { font-size: 15px; }
+  /* The recorder: bigger targets, the tracks' names narrower. */
+  body[data-platform="web"] .recorder .transport { gap: 8px; }
+  body[data-platform="web"] .recorder :is(.pill, .tool, .transport-button, .record-button, .add-track) { min-height: 40px; }
+  body[data-platform="web"] .tracks { --header: 120px; }
+  body[data-platform="web"] .live-hint-line .hint-text { display: none; }
+  body[data-platform="web"] .loop-body { flex-wrap: wrap; }
+  body[data-platform="web"] .loop-layers { flex: 1 1 100%; grid-template-columns: minmax(0, 1fr); }
+  body[data-platform="web"] .loop-head { flex-wrap: wrap; }
+  body[data-platform="web"] .web-metronome { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  body[data-platform="web"] .web-count-in { min-width: 0; max-width: 100%; }
+  body[data-platform="web"] .live-hint-line { flex-wrap: wrap; min-width: 0; }
+  body[data-platform="web"] .live-hint-line .audio-status { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* The web has more chips than the desktop (fullscreen, setlist, MIDI); below 1500 px the
+   "Headphones recommended" tip makes way so the row doesn't run under the undo buttons. */
+@media (max-width: 1500px) {
+  body[data-platform="web"] .topbar .chips > .chip--tip { display: none; }
+}
