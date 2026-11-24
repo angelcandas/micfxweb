@@ -329,13 +329,9 @@ function done(req: IDBRequest): Promise<void> {
   return request(req).then(() => undefined);
 }
 
-/** A file's audio mixed to mono at `rate`. */
-export async function decodeMono(file: Blob, rate: number): Promise<Float32Array> {
-  const channels = await decode(file, rate);
-  if (channels.length === 1) return channels[0]!;
-  const mono = new Float32Array(channels[0]!.length);
-  for (const channel of channels) for (let i = 0; i < mono.length; ++i) mono[i]! += channel[i]! / channels.length;
-  return mono;
+/** A file's audio at `rate`: one or two channels. */
+export function decodeChannels(file: Blob, rate: number): Promise<Float32Array[]> {
+  return decode(file, rate);
 }
 
 /** Decodes a file to one or two channels at `rate`. */

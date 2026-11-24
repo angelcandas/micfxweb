@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 
 // Practice on the web: a voice on its own is prepared (its melody found by analysis.wasm in
@@ -50,10 +51,6 @@ test("a voice-only song is prepared, drawn, and opens again from the library", a
   const view = page.locator(".practice-bar");
   await expect(view).toBeVisible();
 
-  // "Open song…" splits a song: not on the web yet, and it says so.
-  await page.locator(".practice-open").click();
-  await expect(page.locator(".practice-message")).toContainText("voice on its own");
-
   const choosing = page.waitForEvent("filechooser");
   await page.locator(".practice-voice").click();
   await (await choosing).setFiles({ name: "Scale study.wav", mimeType: "audio/wav", buffer: singingWav(16) });
@@ -74,4 +71,24 @@ test("a voice-only song is prepared, drawn, and opens again from the library", a
   await expect(page.locator(".practice-song")).toHaveText("Scale study", { timeout: 15_000 });
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.locator(".practice-library")).toContainText("Scale study");
+});
+
+// The stem splitter's weights (84 MB): CI keeps them in a cache and serves them in place of
+// the download; elsewhere the test is skipped.
+const model = process.env.MICFX_STEMS_MODEL;
+
+test("a whole song is split into its voice and backing, then practised", async ({ page }) => {
+  test.skip(!model || !existsSync(model), "MICFX_STEMS_MODEL isn't set");
+  test.setTimeout(300_000);
+  await page.route(/huggingface\.co/, (route) => route.fulfill({ status: 200, contentType: "application/octet-stream", body: readFileSync(model!) }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".practice-toggle").click();
+
+  const choosing = page.waitForEvent("filechooser");
+  await page.locator(".practice-open").click();
+  await (await choosing).setFiles({ name: "Whole song.wav", mimeType: "audio/wav", buffer: singingWav(12) });
+  await expect(page.locator(".practice-progress-text")).toContainText(/Downloading|Loading|Taking the voice/, { timeout: 30_000 });
+  await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 240_000 });
+  await expect(page.locator(".tracks-rows .track")).toHaveCount(2);
 });

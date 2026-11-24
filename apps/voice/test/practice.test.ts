@@ -43,7 +43,13 @@ function setup(melody = "notes") {
   const host: PracticeHost = {
     store,
     scorer: async () => scorer,
-    decode: async () => new Float32Array(44100 * 3),
+    decode: async () => [new Float32Array(44100 * 3), new Float32Array(44100 * 3)],
+    split: async (song, report) => {
+      report("downloading", 0.5);
+      report("splitting", 1);
+      return { voice: song, backing: song };
+    },
+    encodeWav: (channels) => new Blob([`wav ${channels.length}`]),
     findMelody: async () => ({ melody, key: "A minor" }),
     pickFile: async () => picked,
     install: async () => {
@@ -96,16 +102,25 @@ describe("practice", () => {
     expect(t.store.files.size).toBe(3);
   });
 
-  it("says when there is no melody, and that splitting a song is still to come", async () => {
+  it("says when there is no melody", async () => {
     const t = setup("");
     t.pick(new File(["x"], "Hum.wav"));
     await t.practice.handle("open", { split: false });
     expect((await t.waitFor("error")).error).toContain("Couldn't find a sung melody");
+  });
 
-    const split = setup();
-    const answer = (await split.practice.handle("open", { split: true })) as { ok: boolean };
-    expect(answer.ok).toBe(false);
-    expect((await split.waitFor("error")).error).toContain("voice on its own");
+  it("splits a song into its voice (the guide) and backing, and keeps both", async () => {
+    const t = setup();
+    const song = new File(["a whole song"], "Full Song.mp3");
+    t.pick(song);
+    await t.practice.handle("open", { split: true });
+    const ready = await t.waitFor("ready");
+    expect(ready.song).toMatchObject({ name: "Full Song", hasBacking: true });
+    const phases = t.events.filter(([, e]) => e?.state === "preparing").map(([, e]) => e.job.phase);
+    expect(phases).toEqual(expect.arrayContaining(["reading", "downloading", "listening"]));
+    const id = await fileId(song);
+    expect([...t.store.files.keys()].sort()).toEqual([`${id}/backing.wav`, `${id}/guide.wav`, `${id}/info.json`, `${id}/melody.txt`]);
+    expect((await t.practice.handle("library")) as unknown[]).toMatchObject([{ id, voiceOnly: false }]);
   });
 
   it("scores the pitch readings as the song plays, restarts on a jump, and reports when it stops", async () => {

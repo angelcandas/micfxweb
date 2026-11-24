@@ -29,8 +29,11 @@ export interface PracticeStore {
 export interface PracticeHost {
   store: PracticeStore;
   scorer(): Promise<PracticeScorer>;
-  /** The song's audio, mixed to mono at `rate`. */
-  decode(file: Blob, rate: number): Promise<Float32Array>;
+  /** The song's audio at `rate`: one or two channels. */
+  decode(file: Blob, rate: number): Promise<Float32Array[]>;
+  /** The voice and the rest of a stereo song at 44.1 kHz (the stem splitter). Throws an AbortError when cancelled. */
+  split(song: [Float32Array, Float32Array], report: (phase: "downloading" | "loading" | "splitting", progress: number) => void, cancelled: () => boolean): Promise<{ voice: [Float32Array, Float32Array]; backing: [Float32Array, Float32Array] }>;
+  encodeWav(channels: Float32Array[], rate: number): Blob;
   findMelody(voice: Float32Array, rate: number, keyAudio?: Float32Array): Promise<{ melody: string; key: string }>;
   pickFile(accept: string): Promise<File | undefined>;
   /** The song on the Live tracks in place of what was there; the guide's track id. */
@@ -64,6 +67,8 @@ type Phase = "reading" | "downloading" | "loading" | "splitting" | "listening";
 const AUDIO = "audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a";
 const RATE = 44100; // the desktop's (the stem model's)
 const MELODY = "melody.txt";
+const GUIDE = "guide.wav";
+const BACKING = "backing.wav";
 const INFO = "info.json";
 const SAVED_KEY_LEVEL = "guideLevel";
 
@@ -120,13 +125,8 @@ export class Practice {
     switch (action) {
       case "open": {
         const split = options.split !== false;
-        if (split) {
-          const error = "Splitting a song into its voice and backing is coming to the web soon. For now, open a voice on its own (a guide vocal).";
-          this.host.emit("practice", { state: "error", error });
-          return { ok: false, error };
-        }
         const file = await this.host.pickFile(AUDIO);
-        if (file) void this.prepare(file);
+        if (file) void this.prepare(file, split);
         return { ok: true };
       }
       case "library":
@@ -240,7 +240,7 @@ export class Practice {
   }
 
   //==============================================================================
-  private async prepare(file: File) {
+  private async prepare(file: File, split: boolean) {
     if (this.job) this.job.cancelled = true;
     const job: Job = { phase: "reading", progress: 0, name: file.name.replace(/\.[^.]+$/, ""), cancelled: false };
     this.job = job;
@@ -252,7 +252,7 @@ export class Practice {
     report();
 
     try {
-      const folder = `${await fileId(file)}-voice`;
+      const folder = `${await fileId(file)}${split ? "" : "-voice"}`;
       const cached = await this.loadFolder(folder);
       if (job.cancelled) return fail("");
       if (cached) {
@@ -263,18 +263,46 @@ export class Practice {
         return;
       }
 
-      const voice = await this.host.decode(file, RATE);
+      const decoded = await this.host.decode(file, RATE);
       if (job.cancelled) return fail("");
-      const seconds = voice.length / RATE;
+      const seconds = decoded[0]!.length / RATE;
+      let voice = mono(decoded);
+      let keyAudio: Float32Array | undefined;
+      let guideFile: Blob = file;
+      let backingFile: Blob | undefined;
+
+      if (split) {
+        const stereo: [Float32Array, Float32Array] = [decoded[0]!, decoded[1] ?? decoded[0]!];
+        let lastReport = 0;
+        const parts = await this.host.split(
+          stereo,
+          (phase, progress) => {
+            job.phase = phase;
+            job.progress = progress;
+            const now = this.now();
+            if (now - lastReport > 250 || progress === 0) report();
+            lastReport = now;
+          },
+          () => job.cancelled,
+        );
+        if (job.cancelled) return fail("");
+        voice = mono(parts.voice);
+        keyAudio = mono(parts.backing);
+        guideFile = this.host.encodeWav(parts.voice, RATE);
+        backingFile = this.host.encodeWav(parts.backing, RATE);
+      }
+
       job.phase = "listening";
       job.progress = 0.5;
       report();
-      const { melody, key } = await this.host.findMelody(voice, RATE);
+      const { melody, key } = await this.host.findMelody(voice, RATE, keyAudio);
       if (job.cancelled) return fail("");
-      if (!melody.trim()) return fail("Couldn't find a sung melody in this file.");
+      if (!melody.trim()) return fail(split ? "Couldn't find a sung melody in this song." : "Couldn't find a sung melody in this file.");
 
-      const info: Info = { name: job.name, key, seconds: round3(seconds), voiceOnly: true, opened: this.now(), guide: file.name, backing: "" };
-      await this.host.store.write(folder, file.name, file);
+      const guideName = split ? GUIDE : file.name;
+      const info: Info = { name: job.name, key, seconds: round3(seconds), voiceOnly: !split, opened: this.now(), guide: guideName, backing: backingFile ? BACKING : "" };
+      await this.host.store.write(folder, guideName, guideFile);
+      if (backingFile) await this.host.store.write(folder, BACKING, backingFile);
       await this.host.store.write(folder, MELODY, melody);
       await this.host.store.write(folder, INFO, JSON.stringify(info));
       if (job.cancelled) return fail("");
@@ -283,6 +311,7 @@ export class Practice {
       if (error) return fail(error);
       this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: false });
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") job.cancelled = true;
       const message = error instanceof Error ? error.message : String(error);
       fail(/quota/i.test(message) ? "This browser has no room left to keep the song." : `Couldn't prepare ${file.name}: ${message}`);
     }
@@ -371,6 +400,14 @@ export class Practice {
   private now() {
     return this.host.now?.() ?? Date.now();
   }
+}
+
+/** One or two channels to one. */
+function mono(channels: Float32Array[]): Float32Array {
+  if (channels.length === 1) return channels[0]!;
+  const out = new Float32Array(channels[0]!.length);
+  for (const channel of channels) for (let i = 0; i < out.length; ++i) out[i]! += channel[i]! / channels.length;
+  return out;
 }
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
