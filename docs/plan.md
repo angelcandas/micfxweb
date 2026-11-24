@@ -60,7 +60,7 @@ A thin `LiveEngine` class, written for the web but kept free of browser code so 
 
 - Owns one `fx::FxChain` of every module in Live order, the input and output gains, the hold-for-dry switch and the −1 dB safety limiter, the same signal path as `PluginProcessor::processBlock` in Live mode.
 - Exposes a small C API through `extern "C"`: `create(sampleRate, maxBlock)`, `process(in, out, frames)`, `setValue(id, value)`, `setOrder(keys)`, `readMeters(out)`, `readPitch(out)`.
-- Is built with CMake + Emscripten (`-O2 -msimd128`, no pthreads, `-sALLOW_MEMORY_GROWTH`, ES module output), plus a Node build of the same code for tests.
+- Is built by `packages/engine/build.sh` with Emscripten (`-O2 -msimd128`, no pthreads, `-sSTANDALONE_WASM`, so there is no Emscripten JS glue and the worklet instantiates it itself). The same wasm runs in Node for the tests.
 - Tests run in Node against the wasm: every factory preset renders a voice-like test signal without NaN/Inf/clipping past the limiter, and a few presets' output is compared with numbers from the desktop build (golden files), so a drift between the two is caught.
 
 ## 3. Shared core strategy
