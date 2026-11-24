@@ -1,4 +1,5 @@
 // The audio side of MicFX Voice: the mic, the AudioContext and the engine's worklet.
+import { type RoundTrip, measureRoundTrip } from "@micfx/engine/calibration";
 import wasmUrl from "@micfx/engine/engine.wasm?url";
 import workletUrl from "@micfx/engine/worklet?worker&url";
 import type { FromWorklet, ToWorklet, TransportState, Values } from "@micfx/engine/messages";
@@ -73,6 +74,8 @@ export class LiveAudio {
   private stream: MediaStream | undefined;
   private latencySamples = 0;
   private outputId = "";
+  private inputId = "";
+  private calibrated: ((reply: { mic: Float32Array; clicks: number[]; sampleRate: number }) => void) | undefined;
   private takeChunks: { channels: [Float32Array, Float32Array]; dry?: Float32Array }[] = [];
   private takeDone: ((take: RecordedTake | undefined) => void) | undefined;
   private layersDone: ((layers: { layers: [Float32Array, Float32Array][]; sampleRate: number }) => void) | undefined;
@@ -84,6 +87,7 @@ export class LiveAudio {
   /** Starts the engine and opens the mic. Call from a click (browsers need a gesture for sound). */
   async start(deviceId?: string): Promise<LiveAudioInfo> {
     await this.stop();
+    this.inputId = deviceId ?? "";
     const context = new AudioContext({ latencyHint: "interactive" });
     this.context = context;
     const [module] = await Promise.all([compileEngine(), context.audioWorklet.addModule(workletUrl)]);
@@ -127,6 +131,9 @@ export class LiveAudio {
         else if (message.type === "noiseProfileTaken") {
           this.profileTaken?.(message.ok);
           this.profileTaken = undefined;
+        } else if (message.type === "calibration") {
+          this.calibrated?.(message);
+          this.calibrated = undefined;
         } else if (message.type === "looperLayers") {
           this.layersDone?.({ layers: message.layers, sampleRate: message.sampleRate });
           this.layersDone = undefined;
@@ -194,9 +201,47 @@ export class LiveAudio {
   latencyMs(): number | undefined {
     const context = this.context;
     if (!context) return undefined;
+    const effects = this.latencySamples / context.sampleRate;
+    const measured = this.measuredRoundTrip();
+    if (measured !== undefined) return (measured + effects) * 1000;
     const base = context.baseLatency || 128 / context.sampleRate;
     const output = context.outputLatency || 0;
-    return (base * 2 + output + this.latencySamples / context.sampleRate) * 1000;
+    return (base * 2 + output + effects) * 1000;
+  }
+
+  /** This mic, output and rate together: what a measured round trip belongs to. */
+  private deviceKey(): string {
+    return `${this.inputId || "default"}|${this.outputId || "default"}|${this.context?.sampleRate ?? 0}`;
+  }
+
+  /** The round trip measured on these devices (seconds, without the effects), if it was. */
+  measuredRoundTrip(): number | undefined {
+    const value = readLatencies()[this.deviceKey()];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
+  /** Forgets this device's measure: the browser's estimate is used again. */
+  forgetRoundTrip(): void {
+    const all = readLatencies();
+    delete all[this.deviceKey()];
+    writeLatencies(all);
+  }
+
+  /**
+   * Plays clicks and hears them back (latency calibration): the round trip, kept for these
+   * devices when it was heard clearly.
+   */
+  async calibrate(): Promise<RoundTrip & { seconds?: number }> {
+    if (!this.node || !this.context) throw new Error("Start the sound first.");
+    const reply = await new Promise<{ mic: Float32Array; clicks: number[]; sampleRate: number }>((resolve) => {
+      this.calibrated = resolve;
+      this.post({ type: "calibrate" });
+    });
+    const trip = measureRoundTrip(reply.mic, reply.clicks, reply.sampleRate);
+    if (trip.frames === undefined) return trip;
+    const seconds = trip.frames / reply.sampleRate;
+    writeLatencies({ ...readLatencies(), [this.deviceKey()]: seconds });
+    return { ...trip, seconds };
   }
 
   /** A desktop factory preset by index; onValues follows. */
@@ -318,5 +363,23 @@ export class LiveAudio {
 
   private post(message: ToWorklet) {
     this.node?.port.postMessage(message);
+  }
+}
+
+const LATENCY_KEY = "micfx.latency";
+
+function readLatencies(): Record<string, number> {
+  try {
+    return (JSON.parse(localStorage.getItem(LATENCY_KEY) ?? "{}") as Record<string, number>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLatencies(all: Record<string, number>) {
+  try {
+    localStorage.setItem(LATENCY_KEY, JSON.stringify(all));
+  } catch {
+    // not kept
   }
 }

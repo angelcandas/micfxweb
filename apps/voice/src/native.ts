@@ -697,6 +697,14 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       tracks,
       sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
       applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),
+      /** The round trip: measured on this device, or the browser's estimate. */
+      latency: () => ({ ms: audio.latencyMs(), measured: audio.measuredRoundTrip(), running: audio.running }),
+      calibrate: async () => {
+        await startAudio();
+        if (!audio.running) throw new Error("MicFX needs the microphone to hear the clicks.");
+        return audio.calibrate();
+      },
+      forgetLatency: () => audio.forgetRoundTrip(),
       /** The click, the count-in (bars) and the shared tempo. */
       metronome: () => ({ ...metronomePrefs, bpm: looperState.bpm, beatsPerBar: looperState.beatsPerBar, countingIn: lastMeters.countIn ?? 0 }),
       setMetronome,
