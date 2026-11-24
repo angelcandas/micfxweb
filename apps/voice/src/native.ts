@@ -706,6 +706,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     functions,
     /** For the web's own panels (web-panels.ts): the sound as it is, and the kept tracks. */
     web: {
+      /** Practice: the song's passes and the result card's picture. */
+      practice,
       tracks,
       sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
       applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),

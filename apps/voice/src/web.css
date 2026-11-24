@@ -172,3 +172,34 @@ body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-moti
 @media (max-width: 1500px) {
   body[data-platform="web"] .topbar .chips > .chip--tip { display: none; }
 }
+
+/* Practice: progress over passes and the result card button, on the pass report. */
+.web-progress { display: flex; flex-direction: column; gap: 6px; }
+.web-progress-chart { width: 100%; height: 72px; }
+.web-progress-grid { stroke: var(--line, #2a3040); stroke-width: 1; stroke-dasharray: 3 4; }
+.web-progress-line-path { fill: none; stroke: var(--muted, #8f98ad); stroke-width: 1.5; }
+.web-progress-dot { fill: var(--faint, #555); }
+.web-progress-dot.is-good { fill: var(--good); }
+.web-progress-dot.is-close { fill: var(--close); }
+.web-progress-dot.is-off { fill: var(--off); }
+.web-card-button { align-self: flex-start; }
+
+/* Practice: range finder and warm-ups (practice-tools.ts). */
+.web-practice-tool { width: min(560px, calc(100vw - 32px)); }
+.web-practice-tool[open] { display: flex; flex-direction: column; gap: 12px; }
+.web-practice-tool .web-video-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.web-range-summary { margin: 0; font-size: 14px; }
+.web-range-row { display: grid; grid-template-columns: 64px 52px 1fr auto auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #12151f; }
+.web-range-label { color: var(--muted, #8f98ad); font-size: 12px; }
+.web-range-note { font: 700 18px var(--mono, monospace); }
+.web-range-status { color: var(--muted, #8f98ad); font-size: 12.5px; }
+.web-range-live { min-width: 36px; font: 600 13px var(--mono, monospace); color: var(--accent, #7aa2ff); }
+.web-fit-button { color: var(--good, #3ddc97); }
+.web-warmup-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.web-warmup-field { display: flex; flex-direction: column; gap: 4px; color: var(--muted, #8f98ad); font-size: 12px; }
+.web-warmup-field select { width: 100%; }
+@media (max-width: 760px) {
+  .web-range-row { grid-template-columns: 1fr auto; }
+  .web-range-status { grid-column: 1 / -1; }
+  .web-warmup-form { grid-template-columns: 1fr; }
+}
