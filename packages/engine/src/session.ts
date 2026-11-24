@@ -39,6 +39,8 @@ export class Session {
   /** Playhead, in frames. */
   position = 0;
   playing = false;
+  /** A region that plays round and round (frames), or none. */
+  loop: { from: number; to: number } | undefined;
   private tracks: Track[] = [];
   private guardGain = 1;
   private readonly guardRelease: number;
@@ -92,6 +94,15 @@ export class Session {
     if (options.muted !== undefined) track.muted = options.muted;
   }
 
+  /** Loops `from`..`to` seconds (Practice's phrase and section loops); undefined ends it. */
+  setLoop(from?: number, to?: number): void {
+    if (from === undefined || to === undefined || !(to > from)) {
+      this.loop = undefined;
+      return;
+    }
+    this.loop = { from: Math.max(0, Math.round(from * this.sampleRate)), to: Math.round(to * this.sampleRate) };
+  }
+
   transport(action: TransportAction, seconds?: number): void {
     switch (action) {
       case "play":
@@ -137,6 +148,23 @@ export class Session {
     if (this.recording) this.record(left, right, mic, frames);
     if (!this.playing) return;
 
+    // A loop: the block is played in parts, going back to its start at its end.
+    let mixed = false;
+    let done = 0;
+    while (done < frames) {
+      const loop = this.loop;
+      if (loop && this.position >= loop.to) this.position = loop.from;
+      const count = loop && this.position < loop.to ? Math.min(frames - done, loop.to - this.position) : frames - done;
+      mixed = this.mix(left, right, done, count) || mixed;
+      this.position += count;
+      done += count;
+      if (loop && this.position >= loop.to) this.position = loop.from;
+    }
+    if (mixed || this.guardGain < 1) this.guard(left, right, frames);
+  }
+
+  /** The tracks from the playhead into `left`/`right` at `offset`, `frames` of them; true when any played. */
+  private mix(left: Float32Array, right: Float32Array, offset: number, frames: number): boolean {
     const blockStart = this.position;
     const blockEnd = blockStart + frames;
     let mixed = false;
@@ -150,15 +178,14 @@ export class Session {
       const r = track.channels[1] ?? l;
       const gain = track.gain;
       for (let t = from; t < to; ++t) {
-        const i = t - blockStart;
+        const i = t - blockStart + offset;
         const s = t - track.start;
         left[i]! += l[s]! * gain;
         right[i]! += r[s]! * gain;
       }
       mixed = true;
     }
-    if (mixed || this.guardGain < 1) this.guard(left, right, frames);
-    this.position = blockEnd;
+    return mixed;
   }
 
   private guard(left: Float32Array, right: Float32Array, frames: number) {

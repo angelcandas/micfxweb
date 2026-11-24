@@ -35,11 +35,27 @@ jobs:
         run: pnpm --filter @micfx/engine build:daw
       - run: pnpm typecheck
       - run: pnpm build
+      # The app's source beside it (AGPLv3), for its "Source" link.
+      - name: Put the source archive in the Voice build
+        run: bash scripts/source-archive.sh apps/voice/dist/source.zip
       - name: Install Chromium for the browser tests
         run: pnpm --filter @micfx/voice exec playwright install --with-deps chromium
+      # The stem splitter's weights (84 MB, the desktop's file), for the test that separates a song.
+      - name: Cache the stem splitter's weights
+        uses: actions/cache@v4
+        with:
+          path: ~/stems-model
+          key: stems-htdemucs-4s-f16
+      - name: Download the stem splitter's weights
+        run: |
+          mkdir -p ~/stems-model
+          [ -f ~/stems-model/model.bin ] || curl -fsSL --retry 3 -o ~/stems-model/model.bin \
+            https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin
+          echo "72b17c42d308982ddb5069bc3bf48b81a5aac4cb6516e4366c0fa7cef6df0064  $HOME/stems-model/model.bin" | sha256sum -c -
       - run: pnpm test
         env:
           CI: true
+          MICFX_STEMS_MODEL: /home/runner/stems-model/model.bin
       - name: Keep the built Voice app for the deploy
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -105,9 +121,10 @@ jobs:
           # The domain: the VOICE_DOMAIN variable, or micfxvoice.<the account's sobrinotech zone>.
           if [ -z "$DOMAIN" ]; then
             zones="$(cf "https://api.cloudflare.com/client/v4/zones?account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=50" \
-                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
-            echo "Zones this token sees: ${zones:-none (it may lack Zone: Read)}"
+                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -E '^[a-z0-9.-]+\.[a-z]+$' || true)"
+            # (only domain names: the account's own name is left out of the log)
             zone="$(printf '%s\n' "$zones" | grep -E '^sobrinotech\.' | head -n 1 || true)"
+            echo "The sobrinotech zone: ${zone:-not found (the token may lack Zone: Read)}"
             [ -n "$zone" ] && DOMAIN="$PROJECT.$zone"
           fi
           if [ -z "$DOMAIN" ]; then

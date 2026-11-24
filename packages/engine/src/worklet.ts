@@ -27,6 +27,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private muted = false;
   private micChunk: Float32Array | undefined;
   private micUsed = 0;
+  private pitchOn = false;
   private meterTicks = 0;
   private session = new Session(sampleRate, (chunk: TakeChunk) => {
     const message: FromWorklet = { type: "takeChunk", ...chunk };
@@ -105,6 +106,14 @@ class MicFxProcessor extends AudioWorkletProcessor {
       case "transport":
         this.session.transport(message.action, message.seconds);
         break;
+      case "loop":
+        this.session.setLoop(message.from, message.to);
+        break;
+      case "pitch":
+        this.pitchOn = message.on;
+        engine.pitchEnable(message.on);
+        if (!message.on) engine.readPitch(); // drop what's left
+        break;
       case "captureMic":
         this.flushMic();
         this.micChunk = message.on ? new Float32Array(Math.round(sampleRate * 0.1)) : undefined;
@@ -169,6 +178,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
     if (this.micChunk) this.captureMic(mic);
     const left = out[0]!;
     const right = out[1] ?? left;
+    engine.setTimeline(this.session.position);
     engine.render(mic, left, right);
     this.session.process(left, right, mic, Math.min(mic.length, left.length));
     if (this.muted) {
@@ -188,8 +198,9 @@ class MicFxProcessor extends AudioWorkletProcessor {
         // The looper, with its layers' waveforms 5 times a second while it has a loop.
         ...(this.wantsStatus ? { looper: engine.looperState(++this.meterTicks % 6 === 0) } : {}),
         ...(this.wantsStatus ? { status: engine.status() } : {}),
+        ...(this.pitchOn ? { pitch: engine.readPitch() } : {}),
       };
-      this.port.postMessage(meters);
+      this.port.postMessage(meters, meters.type === "meters" && meters.pitch ? [meters.pitch.buffer as ArrayBuffer] : []);
     }
     return true;
   }

@@ -73,13 +73,36 @@ mapfile -t engine_objects < <(compile "$work/obj" flags \
   "$here/cpp/juce_modules.cpp" "$here/cpp/juce_wasm_stubs.cpp" "$here/cpp/LiveEngine.cpp" "$here/cpp/api.cpp" \
   "$desktop/src/Parameters.cpp" "$desktop/src/Presets.cpp" "$desktop/src/analysis/Chords.cpp" "$desktop/src/analysis/Key.cpp" \
   "$desktop/src/Looper.cpp")
-link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied,_micfx_offer_noise_profile 65536 "${engine_objects[@]}"
+link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied,_micfx_offer_noise_profile,_micfx_pitch_enable,_micfx_set_timeline,_micfx_pitch_read,_micfx_pitch_readings 65536 "${engine_objects[@]}"
 
 # The analysis code reaches the DAW engine in places the sound check never calls; the
 # linker drops those, so only what the exports use is built in.
 mapfile -t analysis_objects < <(compile "$work/obj-studio" studio_flags \
   "$here/cpp/juce_studio_modules.cpp" "$here/cpp/analysis_api.cpp" \
-  "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp)
+  "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp "$desktop/src/daw/Warp.cpp")
 # The analysis keeps big frames on the stack: 1 MB of it (the engine's default 64 KB is plenty there).
-link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile 1048576 \
+link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile,_micfx_find_melody,_micfx_score_song,_micfx_score_frames,_micfx_score_restart,_micfx_score_time,_micfx_score_changes,_micfx_score_report,_micfx_lyrics_set,_micfx_lyrics_align,_micfx_lyrics_nudge,_micfx_song_sections,_micfx_score_shift,_micfx_warp_render,_micfx_warp_output,_micfx_warp_free 1048576 \
   "$work/obj/juce_modules.o" "$work/obj/juce_wasm_stubs.o" "${analysis_objects[@]}"
+
+# stems.wasm: the stem splitter network (demucs.cpp, MIT, on Eigen, MPL 2.0: the desktop's
+# libs/). Its weights are downloaded by the page, not built in.
+demucs="$desktop/libs/demucs.cpp"
+if [ -d "$demucs/src" ] && [ -d "$desktop/libs/eigen/Eigen" ]; then
+  stems_flags=(-std=c++17 -O3 -msimd128 -msse4.2 -ffast-math -fno-exceptions -DNDEBUG -I"$desktop/libs/eigen" -I"$demucs/src" -I"$demucs/src_wasm")
+  mkdir -p "$work/obj-stems"
+  stems_objects=()
+  for src in "$demucs/src/"*.cpp "$here/cpp/demucs_api.cpp"; do
+    obj="$work/obj-stems/$(basename "$src" .cpp).o"
+    if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ]; then
+      echo "  compile $(basename "$src")" >&2
+      em++ "${stems_flags[@]}" -c "$src" -o "$obj"
+    fi
+    stems_objects+=("$obj")
+  done
+  em++ -O3 -msimd128 "${stems_objects[@]}" -o "$out/stems.wasm" -sSTACK_SIZE=5242880 -sSTANDALONE_WASM=1 --no-entry \
+    -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sINITIAL_MEMORY=33554432 -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_stems_load,_micfx_stems_separate
+  echo "Built $(du -h "$out/stems.wasm" | cut -f1) $out/stems.wasm"
+else
+  echo "Missing libs/demucs.cpp or libs/eigen in the desktop core: run 'pnpm deps' first." >&2
+  exit 1
+fi

@@ -112,7 +112,8 @@ export class Tracks {
     });
   }
 
-  async addBackingTrack(file: Blob & { name?: string }): Promise<void> {
+  /** Loads a song file as a track; its id, or undefined when it couldn't be loaded. */
+  async addBackingTrack(file: Blob & { name?: string }, options: { gain?: number; muted?: boolean } = {}): Promise<number | undefined> {
     this.loading++;
     this.onChanged();
     try {
@@ -127,16 +128,18 @@ export class Tracks {
         isTake: false,
         start: 0,
         length,
-        gain: 1,
-        muted: false,
+        gain: options.gain ?? 1,
+        muted: options.muted ?? false,
         peaks: peaks(channels, rate),
         audio: file,
         fileName: file.name ?? `${name}.wav`,
       };
       this.decoded.set(track.id, { rate, channels });
       await this.add(track);
+      return track.id;
     } catch (error) {
       this.onError(`Couldn't load ${file.name ?? "the song"}: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
     } finally {
       this.loading--;
       this.onChanged();
@@ -324,6 +327,11 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
 
 function done(req: IDBRequest): Promise<void> {
   return request(req).then(() => undefined);
+}
+
+/** A file's audio at `rate`: one or two channels. */
+export function decodeChannels(file: Blob, rate: number): Promise<Float32Array[]> {
+  return decode(file, rate);
 }
 
 /** Decodes a file to one or two channels at `rate`. */

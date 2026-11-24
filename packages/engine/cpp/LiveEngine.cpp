@@ -17,6 +17,7 @@ LiveEngine::LiveEngine (double sampleRate, int maxBlockSize)
     buffer.setSize (2, maxBlockSize);
     loopInput.setSize (2, maxBlockSize);
     looper.prepare (sampleRate);
+    pitchTap.prepare (sampleRate);
     guardRelease = 1.0f - std::exp (-1.0f / (0.1f * (float) sampleRate)); // ~100 ms, as the desktop's
 
     for (int m = 0; m < chain.size(); ++m)
@@ -51,6 +52,9 @@ void LiveEngine::process (const float* input, float* left, float* right, int num
 
     inputGain.process (context);
     peaks.input = juce::jmax (peaks.input, buffer.getMagnitude (0, 0, numSamples));
+
+    // The Practice view follows the singer's own pitch, before any effect touches it.
+    pitchTap.process (buffer.getReadPointer (0), numSamples, timeline);
 
     if (! dry)
         chain.process (context);
