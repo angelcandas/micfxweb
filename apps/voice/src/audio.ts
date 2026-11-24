@@ -17,6 +17,8 @@ export interface RecordedTake {
   sampleRate: number;
   channels: [Float32Array, Float32Array];
   dry?: Float32Array;
+  /** The live input (a browser tab) as it came in during the take, when it was on. */
+  backing?: [Float32Array, Float32Array];
 }
 
 /** The meters with the transport and the recorder, as the worklet sends them. */
@@ -76,7 +78,15 @@ export class LiveAudio {
   private outputId = "";
   private inputId = "";
   private calibrated: ((reply: { mic: Float32Array; clicks: number[]; sampleRate: number }) => void) | undefined;
-  private takeChunks: { channels: [Float32Array, Float32Array]; dry?: Float32Array }[] = [];
+  private takeChunks: { channels: [Float32Array, Float32Array]; dry?: Float32Array; backing?: [Float32Array, Float32Array] }[] = [];
+  /** A live sound (a browser tab) on the engine's second input, kept across restarts. */
+  private liveStream: MediaStream | undefined;
+  private liveSource: MediaStreamAudioSourceNode | undefined;
+  private liveAnalyser: AnalyserNode | undefined;
+  private liveGain = 1;
+  private liveScratch: Float32Array<ArrayBuffer> | undefined;
+  /** What you hear, as a stream (for a video), made on first use. */
+  private outputTap: MediaStreamAudioDestinationNode | undefined;
   private takeDone: ((take: RecordedTake | undefined) => void) | undefined;
   private layersDone: ((layers: { layers: [Float32Array, Float32Array][]; sampleRate: number }) => void) | undefined;
 
@@ -103,11 +113,12 @@ export class LiveAudio {
       },
     });
 
+    // Input 0: the mic (made mono first); input 1: a live sound such as a browser tab, stereo.
     const node = new AudioWorkletNode(context, "micfx-live", {
-      numberOfInputs: 1,
+      numberOfInputs: 2,
       numberOfOutputs: 1,
       outputChannelCount: [2],
-      channelCount: 1,
+      channelCount: 2,
       channelCountMode: "explicit",
       channelInterpretation: "speakers",
       processorOptions: { module },
@@ -125,7 +136,7 @@ export class LiveAudio {
         else if (message.type === "meters") {
           this.latencySamples = message.latencySamples;
           this.onMeters(message);
-        } else if (message.type === "takeChunk") this.takeChunks.push({ channels: message.channels, dry: message.dry });
+        } else if (message.type === "takeChunk") this.takeChunks.push({ channels: message.channels, dry: message.dry, backing: message.backing });
         else if (message.type === "takeEnd") this.finishTake(message.start, message.frames);
         else if (message.type === "micChunk") this.onMicChunk(message.samples);
         else if (message.type === "noiseProfileTaken") {
@@ -142,8 +153,10 @@ export class LiveAudio {
     });
 
     if (this.outputId) await this.setOutput(this.outputId).catch(() => {});
-    context.createMediaStreamSource(this.stream).connect(node);
+    const mono = new GainNode(context, { channelCount: 1, channelCountMode: "explicit", channelInterpretation: "speakers" });
+    context.createMediaStreamSource(this.stream).connect(mono).connect(node, 0, 0);
     node.connect(context.destination);
+    this.connectLive();
     await context.resume();
     return ready;
   }
@@ -159,10 +172,66 @@ export class LiveAudio {
     this.finishTake(undefined, undefined);
     this.stream?.getTracks().forEach((track) => track.stop());
     this.node?.disconnect();
+    this.liveSource?.disconnect();
+    this.liveSource = undefined;
+    this.liveAnalyser = undefined;
+    this.outputTap = undefined;
     await this.context?.close().catch(() => {});
     this.stream = undefined;
     this.node = undefined;
     this.context = undefined;
+  }
+
+  /**
+   * A live sound under the voice (a browser tab's audio): heard at its level, and kept beside
+   * each take. undefined takes it away. It stays across restarts of the sound.
+   */
+  setLiveInput(stream: MediaStream | undefined): void {
+    this.liveStream = stream;
+    this.connectLive();
+  }
+
+  /** The live input's level (linear gain). */
+  setLiveGain(gain: number): void {
+    this.liveGain = gain;
+    this.post({ type: "liveInput", on: Boolean(this.liveSource), gain });
+  }
+
+  /** The live input's peak just now (linear), or undefined when there's none playing. */
+  livePeak(): number | undefined {
+    const analyser = this.liveAnalyser;
+    if (!analyser) return undefined;
+    this.liveScratch ??= new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(this.liveScratch);
+    let peak = 0;
+    for (const v of this.liveScratch) peak = Math.max(peak, Math.abs(v));
+    return peak;
+  }
+
+  private connectLive() {
+    this.liveSource?.disconnect();
+    this.liveSource = undefined;
+    this.liveAnalyser = undefined;
+    const { context, node, liveStream } = this;
+    if (!context || !node) return;
+    if (liveStream?.getAudioTracks().some((track) => track.readyState === "live")) {
+      this.liveSource = context.createMediaStreamSource(liveStream);
+      this.liveAnalyser = new AnalyserNode(context, { fftSize: 2048 });
+      this.liveSource.connect(node, 0, 1);
+      this.liveSource.connect(this.liveAnalyser);
+    }
+    this.post({ type: "liveInput", on: Boolean(this.liveSource), gain: this.liveGain });
+  }
+
+  /** What you hear (the voice, the tracks, a tab) as a stream, for a video; undefined when stopped. */
+  outputStream(): MediaStream | undefined {
+    const { context, node } = this;
+    if (!context || !node) return undefined;
+    if (!this.outputTap) {
+      this.outputTap = context.createMediaStreamDestination();
+      node.connect(this.outputTap);
+    }
+    return this.outputTap.stream;
   }
 
   /** Whether meters carry the tuner and the effect cards' readings. */
@@ -352,12 +421,14 @@ export class LiveAudio {
       return out;
     };
     const dryParts = chunks.map((c) => c.dry).filter((d): d is Float32Array => d !== undefined);
+    const backingParts = chunks.map((c) => c.backing).filter((b): b is [Float32Array, Float32Array] => b !== undefined);
     done({
       start: start / rate,
       seconds: frames / rate,
       sampleRate: rate,
       channels: [join(chunks.map((c) => c.channels[0])), join(chunks.map((c) => c.channels[1]))],
       dry: dryParts.length ? join(dryParts) : undefined,
+      backing: backingParts.length ? [join(backingParts.map((b) => b[0])), join(backingParts.map((b) => b[1]))] : undefined,
     });
   }
 

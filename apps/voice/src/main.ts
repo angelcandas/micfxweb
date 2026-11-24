@@ -6,6 +6,8 @@ import { createShadowEngine, LiveAudio } from "./audio";
 import { createNative } from "./native";
 import { addMetronome } from "./metronome-ui";
 import { addShowMode } from "./show-mode";
+import { addTabAudioNote } from "./tab-audio";
+import { addVideo } from "./video";
 import { registerOffline } from "./update";
 import { addWebSettings, openSharedSound } from "./web-panels";
 import "./web.css";
@@ -48,6 +50,8 @@ async function boot() {
   addWebSettings(native.web);
   addMetronome(native.web);
   addShowMode();
+  addVideo(native.web);
+  addTabAudioNote();
   native.started();
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));
