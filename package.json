@@ -1,0 +1,17 @@
+{
+  "name": "micfxweb",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "deps": "bash scripts/fetch-deps.sh",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "dev": "pnpm --filter @micfx/voice dev"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
