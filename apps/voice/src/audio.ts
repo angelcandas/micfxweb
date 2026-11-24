@@ -103,15 +103,21 @@ export class LiveAudio {
     const [module] = await Promise.all([compileEngine(), context.audioWorklet.addModule(workletUrl)]);
 
     // The browser's own voice processing would fight the effects and add latency.
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: { ideal: 1 },
-      },
-    });
+    this.stream = await navigator.mediaDevices
+      .getUserMedia({
+        audio: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: { ideal: 1 },
+        },
+      })
+      .catch(async (error: unknown) => {
+        // No mic (blocked, unplugged): no half-started sound either.
+        await this.stop();
+        throw error;
+      });
 
     // Input 0: the mic (made mono first); input 1: a live sound such as a browser tab, stereo.
     const node = new AudioWorkletNode(context, "micfx-live", {

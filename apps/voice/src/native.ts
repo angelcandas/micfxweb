@@ -19,6 +19,7 @@ import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
 import { TabAudio, gainOf, mixBacking } from "./tab-audio";
+import { MIC_DENIED_EVENT, micHelp } from "./mic-help";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -777,8 +778,10 @@ function readDry(): boolean {
 }
 
 function micErrorText(error: unknown): string {
-  if (error instanceof DOMException && error.name === "NotAllowedError")
-    return "MicFX needs your microphone. Allow it in the browser's address bar, then try again.";
+  if (error instanceof DOMException && error.name === "NotAllowedError") {
+    dispatchEvent(new Event(MIC_DENIED_EVENT));
+    return `MicFX needs your microphone. ${micHelp()}`;
+  }
   if (error instanceof DOMException && error.name === "NotFoundError") return "No microphone found. Plug one in and try again.";
   return `Couldn't start the audio: ${error instanceof Error ? error.message : String(error)}`;
 }
