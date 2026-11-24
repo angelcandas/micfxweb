@@ -320,3 +320,16 @@ MICFX_EXPORT const float* micfx_looper_copied (Instance* instance, int channel)
 {
     return instance->exported.getReadPointer (juce::jlimit (0, juce::jmax (0, instance->exported.getNumChannels() - 1), channel));
 }
+
+//==============================================================================
+// Sound check: the room's profile (power per bin, from analysis.wasm's micfx_sound_check)
+// for the denoiser, as the desktop's SoundCheck::finishAnalysis hands it over. `bins` points
+// into memory from malloc. 1 when the denoiser took it.
+MICFX_EXPORT int micfx_offer_noise_profile (Instance* instance, const float* bins, int count)
+{
+    if (bins == nullptr || count <= 0)
+        return 0;
+    if (auto* denoise = instance->engine.getChain().find<fx::modules::Denoise>())
+        return denoise->offerProfile (std::vector<float> (bins, bins + count)) ? 1 : 0;
+    return 0;
+}

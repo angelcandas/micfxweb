@@ -24,3 +24,172 @@ index 55f630a..1fefab6 100644
          { Thread::Priority::highest,    0 },
          { Thread::Priority::high,       0 },
          { Thread::Priority::normal,     0 },
+diff --git a/juce_data_structures/app_properties/juce_PropertiesFile.cpp b/juce_data_structures/app_properties/juce_PropertiesFile.cpp
+index 56ed8b4..a604b0f 100644
+--- a/juce_data_structures/app_properties/juce_PropertiesFile.cpp
++++ b/juce_data_structures/app_properties/juce_PropertiesFile.cpp
+@@ -98,7 +98,7 @@ File PropertiesFile::Options::getDefaultFile() const
+     if (folderName.isNotEmpty())
+         dir = dir.getChildFile (folderName);
+ 
+-   #elif JUCE_LINUX || JUCE_BSD || JUCE_ANDROID
++   #elif JUCE_LINUX || JUCE_BSD || JUCE_ANDROID || JUCE_WASM
+     auto dir = File (commonToAllUsers ? "/var" : "~")
+                       .getChildFile (folderName.isNotEmpty() ? folderName
+                                                              : ("." + applicationName));
+diff --git a/juce_events/juce_events.cpp b/juce_events/juce_events.cpp
+index a4981f6..7960ec7 100644
+--- a/juce_events/juce_events.cpp
++++ b/juce_events/juce_events.cpp
+@@ -115,4 +115,7 @@
+ #elif JUCE_ANDROID
+  #include "native/juce_Messaging_android.cpp"
+ 
++#elif JUCE_WASM
++ #include "native/juce_Messaging_wasm.cpp"
++
+ #endif
+diff --git a/juce_events/native/juce_Messaging_wasm.cpp b/juce_events/native/juce_Messaging_wasm.cpp
+new file mode 100644
+index 0000000..2ba82d5
+--- /dev/null
++++ b/juce_events/native/juce_Messaging_wasm.cpp
+@@ -0,0 +1,72 @@
++/*
++  ==============================================================================
++
++   WebAssembly (MicFX web): the message queue on the one thread there is. Nothing runs by
++   itself: the page calls juce::wasmDispatchMessages() (exported by the app) from its own
++   event loop, which delivers the posted messages and calls the timers that are due.
++
++  ==============================================================================
++*/
++
++namespace juce
++{
++
++void wasmPumpTimers();
++
++namespace
++{
++    std::deque<MessageManager::MessageBase::Ptr>& wasmQueue()
++    {
++        static std::deque<MessageManager::MessageBase::Ptr> queue;
++        return queue;
++    }
++}
++
++void MessageManager::doPlatformSpecificInitialisation() {}
++
++void MessageManager::doPlatformSpecificShutdown()
++{
++    wasmQueue().clear();
++}
++
++bool MessageManager::postMessageToSystemQueue (MessageManager::MessageBase* const message)
++{
++    wasmQueue().push_back (message);
++    return true;
++}
++
++void MessageManager::broadcastMessage (const String&) {}
++
++namespace detail
++{
++bool dispatchNextMessageOnSystemQueue (bool)
++{
++    auto& queue = wasmQueue();
++    if (queue.empty())
++        return false;
++
++    const auto message = queue.front();
++    queue.pop_front();
++
++    JUCE_TRY
++    {
++        message->messageCallback();
++    }
++    JUCE_CATCH_EXCEPTION
++
++    return true;
++}
++} // namespace detail
++
++/** Delivers what was posted (at most `maxMessages`, so a message that posts another can't
++    hang the page) and calls the timers that are due. Returns how many are still waiting. */
++int wasmDispatchMessages (int maxMessages)
++{
++    wasmPumpTimers();
++
++    for (int i = 0; i < maxMessages && detail::dispatchNextMessageOnSystemQueue (true); ++i) {}
++
++    return (int) wasmQueue().size();
++}
++
++} // namespace juce
+diff --git a/juce_events/timers/juce_Timer.cpp b/juce_events/timers/juce_Timer.cpp
+index 269553b..4c9054f 100644
+--- a/juce_events/timers/juce_Timer.cpp
++++ b/juce_events/timers/juce_Timer.cpp
+@@ -179,6 +179,21 @@ public:
+         callbackArrived.signal();
+     }
+ 
++   #if JUCE_WASM
++    /** One pass of run(), on the one thread there is: calls the timers that are due. */
++    void pump()
++    {
++        auto now = Time::getMillisecondCounter();
++        auto elapsed = (int) (now >= pumpTime ? (now - pumpTime) : 0);
++        pumpTime = now;
++
++        if (getTimeUntilFirstTimer (elapsed) <= 0)
++            callTimers();
++    }
++
++    uint32 pumpTime = Time::getMillisecondCounter();
++   #endif
++
+     void callTimersSynchronously()
+     {
+         callTimers();
+@@ -188,8 +203,10 @@ public:
+     {
+         const LockType::ScopedLockType sl (lock);
+ 
++       #if ! JUCE_WASM // no threads: the page calls juce::wasmDispatchMessages()
+         if (! isThreadRunning())
+             startThread (Thread::Priority::high);
++       #endif
+ 
+         // Trying to add a timer that's already here - shouldn't get to this point,
+         // so if you get this assertion, let me know!
+@@ -352,6 +369,14 @@ private:
+     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TimerThread)
+ };
+ 
++#if JUCE_WASM
++void wasmPumpTimers()
++{
++    if (auto instance = SharedResourcePointer<Timer::TimerThread>::getSharedObjectWithoutCreating())
++        (*instance)->pump();
++}
++#endif
++
+ //==============================================================================
+ Timer::Timer() noexcept {}
+ Timer::Timer (const Timer&) noexcept {}
+diff --git a/juce_events/timers/juce_Timer.h b/juce_events/timers/juce_Timer.h
+index 6fb76d9..6031959 100644
+--- a/juce_events/timers/juce_Timer.h
++++ b/juce_events/timers/juce_Timer.h
+@@ -139,6 +139,9 @@ public:
+ 
+ private:
+     class TimerThread;
++   #if JUCE_WASM
++    friend void wasmPumpTimers();
++   #endif
+     size_t positionInQueue = (size_t) -1;
+     int timerPeriodMs = 0;
+     SharedResourcePointer<TimerThread> timerThread;

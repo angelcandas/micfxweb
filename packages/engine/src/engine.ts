@@ -94,6 +94,7 @@ interface Exports {
   malloc(bytes: number): number;
   free(pointer: number): void;
   micfx_detect_key(samples: number, frames: number, sampleRate: number): number;
+  micfx_offer_noise_profile(engine: number, bins: number, count: number): number;
   micfx_looper_command(engine: number, command: number): number;
   micfx_looper_layer(engine: number, layer: number, gain: number, muted: number): void;
   micfx_looper_settings(engine: number, bpm: number, beatsPerBar: number, locked: number, volume: number): void;
@@ -125,7 +126,7 @@ const ENOSYS = 52;
 
 // The WASI and Emscripten imports the standalone wasm declares. The DSP never reads files
 // or the environment, so these only have to exist; the clock is the one that answers.
-function makeImports(memory: () => WebAssembly.Memory): WebAssembly.Imports {
+export function makeImports(memory: () => WebAssembly.Memory): WebAssembly.Imports {
   const now = () => (globalThis.performance?.now?.() ?? Date.now()) * 1e6;
   const fail = () => ENOSYS;
   return {
@@ -314,6 +315,19 @@ export class LiveEngine {
       new Float32Array(this.x.memory.buffer, at, mono.length).set(mono);
       const { confidencePerMille, ...key } = JSON.parse(this.readResult(this.x.micfx_detect_key(at, mono.length, sampleRate))) as Omit<KeyEstimate, "confidence"> & { confidencePerMille: number };
       return { ...key, confidence: confidencePerMille / 1000 };
+    } finally {
+      this.x.free(at);
+    }
+  }
+
+  /** The room's profile from a sound check (power per bin) for the denoiser. True when it took it. */
+  offerNoiseProfile(bins: Float32Array): boolean {
+    if (!bins.length) return false;
+    const at = this.x.malloc(bins.length * 4);
+    if (!at) return false;
+    try {
+      new Float32Array(this.x.memory.buffer, at, bins.length).set(bins);
+      return this.x.micfx_offer_noise_profile(this.handle, at, bins.length) === 1;
     } finally {
       this.x.free(at);
     }

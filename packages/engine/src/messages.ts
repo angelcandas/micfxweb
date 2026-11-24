@@ -26,7 +26,11 @@ export type ToWorklet =
   | { type: "looperLayer"; layer: number; gain?: number; muted?: boolean }
   | { type: "looperSettings"; bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }
   /** Every layer's audio: "looperLayers" follows. */
-  | { type: "looperExport" };
+  | { type: "looperExport" }
+  /** The raw mic, for a sound check: "micChunk"s of about 0.1 s while on. */
+  | { type: "captureMic"; on: boolean }
+  /** A sound check's room profile (power per bin) for the denoiser. */
+  | { type: "noiseProfile"; bins: Float32Array };
 
 /** The transport, in seconds, as the desktop's meters event has it. */
 export interface TransportState {
@@ -50,5 +54,7 @@ export type FromWorklet =
   | ({ type: "meters"; status?: EngineStatus; transport: TransportState; recording: number; looper?: LooperState } & Meters)
   | ({ type: "takeChunk" } & TakeChunk)
   | { type: "looperLayers"; layers: [Float32Array, Float32Array][]; sampleRate: number }
+  | { type: "micChunk"; samples: Float32Array }
+  | { type: "noiseProfileTaken"; ok: boolean }
   /** After the last chunk of a take; undefined fields when nothing was recording. */
   | ({ type: "takeEnd" } & Partial<TakeEnd>);
