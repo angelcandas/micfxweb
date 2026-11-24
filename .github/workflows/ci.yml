@@ -210,9 +210,10 @@ jobs:
           # The domain: the DAW_DOMAIN variable, or micfxdaw.<the account's sobrinotech zone>.
           if [ -z "$DOMAIN" ]; then
             zones="$(cf "https://api.cloudflare.com/client/v4/zones?account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=50" \
-                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
-            echo "Zones this token sees: ${zones:-none (it may lack Zone: Read)}"
+                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -E '^[a-z0-9.-]+\.[a-z]+$' || true)"
+            # (only domain names: the account's own name is left out of the log)
             zone="$(printf '%s\n' "$zones" | grep -E '^sobrinotech\.' | head -n 1 || true)"
+            echo "The sobrinotech zone: ${zone:-not found (the token may lack Zone: Read)}"
             [ -n "$zone" ] && DOMAIN="$PROJECT.$zone"
           fi
           if [ -z "$DOMAIN" ]; then
@@ -223,8 +224,13 @@ jobs:
           if cf "$api" | grep -q "\"name\":\"$DOMAIN\""; then
             echo "$DOMAIN is already attached"
           else
-            cf -X POST --data "{\"name\":\"$DOMAIN\"}" "$api" > /dev/null
-            echo "Attached $DOMAIN (Cloudflare adds the DNS record when the zone is on Cloudflare)"
+            # The site is already up on pages.dev: a refused domain is a warning with Cloudflare's reason, not a failed deploy.
+            answer="$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" -X POST --data "{\"name\":\"$DOMAIN\"}" "$api" || true)"
+            if printf '%s' "$answer" | grep -q '"success":true'; then
+              echo "Attached $DOMAIN (Cloudflare adds the DNS record when the zone is on Cloudflare)"
+            else
+              echo "::warning::Cloudflare didn't attach $DOMAIN: $(printf '%s' "$answer" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 | head -n 3 | tr '\n' ' ')"
+            fi
           fi
           # The DNS record (the API doesn't add it as the dashboard does): a proxied CNAME to the Pages site.
           zone_id="$(cf "https://api.cloudflare.com/client/v4/zones?name=${DOMAIN#*.}" | grep -o '"id":"[0-9a-f]\{32\}"' | head -n 1 | cut -d'"' -f4 || true)"
