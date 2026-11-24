@@ -42,9 +42,10 @@ test("each pass is kept and charted, and the pass saves as a picture", async ({ 
   // A second pass from the start; after a reload, both are still there.
   await report.locator(".practice-report-close").click();
   await page.locator(".practice-restart").click();
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(9000);
   await page.locator('[data-transport="play"]').click();
   await expect(report).toBeVisible();
+  await expect(report.locator(".practice-report-score")).toBeVisible();
   await expect(report.locator(".web-progress-dot")).toHaveCount(2);
   await expect(report.locator(".web-progress-line")).toContainText("2 passes");
 

@@ -7,7 +7,8 @@
 // tap (the mic before the effects) is scored against it by the desktop's scoring
 // (analysis.wasm on the page), and the page hears back on the desktop's events.
 import type { PracticeLyrics, PracticeScores, PracticeSong, SongSection } from "@micfx/engine/analysis";
-import { HISTORY, addPass, parsePasses, passFrom, type Pass } from "./practice-history";
+import { historyFile, partMelody, type Part } from "./harmony";
+import { addPass, parsePasses, passFrom, type Pass } from "./practice-history";
 
 /** How the analysis on the page scores (Analysis from @micfx/engine/analysis). */
 export interface PracticeScorer {
@@ -95,6 +96,32 @@ interface Job {
   progress: number;
   name: string;
   cancelled: boolean;
+  /** The song's length and when splitting began (ms), for the time left. */
+  seconds?: number;
+  splitFrom?: number;
+}
+
+const SPLIT_SPEED_KEY = "micfx.splitSpeed";
+
+/** Seconds of song split per second here, from the last split (undefined before the first). */
+function splitSpeed(): number | undefined {
+  try {
+    const value = Number(localStorage.getItem(SPLIT_SPEED_KEY));
+    return value > 0 && Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Seconds left of a split: from how far it has got once it's under way, else from how fast
+ * the last split went here, else a guess from the cores (about a fifth of real time each, at
+ * most two splitters).
+ */
+export function splitSecondsLeft(job: { seconds: number; progress: number; elapsed: number }, speed = splitSpeed(), cores = navigator.hardwareConcurrency || 2): number {
+  if (job.progress > 0.04 && job.elapsed > 2) return (job.elapsed * (1 - job.progress)) / job.progress;
+  const rate = speed ?? 0.2 * Math.min(2, Math.max(1, Math.floor(cores / 4)));
+  return Math.max(0, job.seconds / rate - job.elapsed);
 }
 
 interface Current {
@@ -142,6 +169,8 @@ export class Practice {
   private passes: Pass[] = [];
   /** What you sang this pass: [song time, midi] pairs, for the result card. */
   private trail: number[] = [];
+  /** The part sung: the melody, or a harmony a third above or below it (duet mode). */
+  private part: Part = "lead";
   /** Who hears each pitch reading (the range finder): MIDI, 0 where none. */
   private pitchListeners = new Set<(midi: number) => void>();
 
@@ -157,11 +186,11 @@ export class Practice {
   /** The song from the last visit, when its guide is still on the Live tracks. */
   async restore(): Promise<void> {
     try {
-      const saved = JSON.parse(this.host.load() ?? "null") as { folder?: string; guideId?: number; shift?: Shift } | null;
+      const saved = JSON.parse(this.host.load() ?? "null") as { folder?: string; guideId?: number; shift?: Shift; part?: Part } | null;
       if (!saved?.folder || typeof saved.guideId !== "number" || !this.host.trackIds().includes(saved.guideId)) return;
       const loaded = await this.loadFolder(saved.folder);
       if (!loaded || this.current) return;
-      await this.setCurrent(saved.folder, loaded.info, loaded.melody, saved.guideId);
+      await this.setCurrent(saved.folder, loaded.info, loaded.melody, saved.guideId, saved.part === "above" || saved.part === "below" ? saved.part : "lead");
       // The tracks are the song in the key and speed it had.
       const current = this.current as Current | undefined; // (set by setCurrent)
       if (saved.shift && Number.isFinite(saved.shift.speed) && Number.isFinite(saved.shift.semitones) && current) {
@@ -376,9 +405,11 @@ export class Practice {
       if (split) {
         const stereo: [Float32Array, Float32Array] = [decoded[0]!, decoded[1] ?? decoded[0]!];
         let lastReport = 0;
+        job.seconds = seconds;
         const parts = await this.host.split(
           stereo,
           (phase, progress) => {
+            if (phase === "splitting" && job.phase !== "splitting") job.splitFrom = this.now();
             job.phase = phase;
             job.progress = progress;
             const now = this.now();
@@ -388,6 +419,14 @@ export class Practice {
           () => job.cancelled,
         );
         if (job.cancelled) return fail("");
+        if (job.splitFrom !== undefined && seconds > 20) {
+          // How fast it went here, for the next song's estimate.
+          try {
+            localStorage.setItem(SPLIT_SPEED_KEY, String(seconds / Math.max(1, (this.now() - job.splitFrom) / 1000)));
+          } catch {
+            // not kept
+          }
+        }
         voice = mono(parts.voice);
         keyAudio = mono(parts.backing);
         guideFile = this.host.encodeWav(parts.voice, RATE);
@@ -635,9 +674,10 @@ export class Practice {
     }
   }
 
-  private async setCurrent(folder: string, info: Info, melody: string, guideId: number | undefined) {
+  private async setCurrent(folder: string, info: Info, melody: string, guideId: number | undefined, part: Part = "lead") {
     this.scorer ??= await this.host.scorer();
-    const song = this.scorer.scoreSong(melody);
+    this.part = part;
+    const song = this.scorer.scoreSong(partMelody(melody, info.key, part));
     const kept = await (await this.host.store.read(folder, LYRICS))?.text().catch(() => "");
     const lyrics = kept ? this.scorer.lyricsSet(kept, true) : undefined;
     this.lastLrc = lyrics?.lrc ?? "";
@@ -650,7 +690,7 @@ export class Practice {
     }
     this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections };
     this.trail = [];
-    this.passes = parsePasses(await (await this.host.store.read(folder, HISTORY))?.text().catch(() => undefined));
+    this.passes = parsePasses(await (await this.host.store.read(folder, historyFile(part)))?.text().catch(() => undefined));
     this.shift = { speed: 1, semitones: 0 };
     this.pending = undefined;
     this.shiftToken++;
@@ -706,6 +746,7 @@ export class Practice {
       file: current.info.guide,
       ...current.song,
       hasBacking: Boolean(current.info.backing),
+      part: this.part,
       key: current.info.key,
       shift: this.describeShift(),
       lyrics: this.describeLyrics(),
@@ -727,7 +768,44 @@ export class Practice {
     const pass = current ? passFrom(report, this.now(), this.shift) : undefined;
     if (!current || !pass) return;
     this.passes = addPass(this.passes, pass);
-    void this.host.store.write(current.folder, HISTORY, JSON.stringify(this.passes)).catch(() => {});
+    void this.host.store.write(current.folder, historyFile(this.part), JSON.stringify(this.passes)).catch(() => {});
+  }
+
+  /** The time a song's split takes (before it starts) or has left (while it runs). */
+  splitLeft(): { seconds: number; started: boolean } | undefined {
+    const job = this.job;
+    if (!job?.seconds || !["downloading", "loading", "splitting"].includes(job.phase)) return undefined;
+    // Before it starts: the whole split; then, what's left of it.
+    if (job.phase !== "splitting" || job.splitFrom === undefined) return { seconds: splitSecondsLeft({ seconds: job.seconds, progress: 0, elapsed: 0 }), started: false };
+    return { seconds: splitSecondsLeft({ seconds: job.seconds, progress: job.progress, elapsed: (this.now() - job.splitFrom) / 1000 }), started: true };
+  }
+
+  /** The part sung now. */
+  currentPart(): Part {
+    return this.part;
+  }
+
+  /**
+   * Sings another part of the song: its notes are a harmony a third above or below the
+   * melody (or the melody again), scored on their own with their own passes. The music and
+   * guide stay as they are, so a second singer can take the lead beside you.
+   */
+  async setPart(part: Part): Promise<void> {
+    const current = this.current;
+    if (!current || !this.scorer || part === this.part) return;
+    this.part = part;
+    const position = Math.max(0, this.lastSongTime);
+    current.base = this.scorer.scoreSong(partMelody(current.melody, current.info.key, part));
+    current.song = this.shift.speed !== 1 || this.shift.semitones !== 0 ? this.scorer.scoreShift(this.shift.semitones, this.shift.speed, position) : current.base;
+    // The lyrics sit on the same notes.
+    const kept = await (await this.host.store.read(current.folder, LYRICS))?.text().catch(() => "");
+    if (kept) current.lyrics = this.scorer.lyricsSet(kept, true).lines;
+    this.passes = parsePasses(await (await this.host.store.read(current.folder, historyFile(part)))?.text().catch(() => undefined));
+    this.trail = [];
+    if (this.loopState) this.applyLoop(false);
+    this.restartFrom(position);
+    this.persist();
+    this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: true, quiet: true });
   }
 
   /** Each pitch reading while Practice is open; returns the way to stop. */
@@ -793,7 +871,7 @@ export class Practice {
   }
 
   private persist() {
-    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1, shift: this.shift }));
+    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1, shift: this.shift, part: this.part }));
   }
 
   private now() {
