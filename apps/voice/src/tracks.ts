@@ -339,7 +339,7 @@ export function encodeWav(channels: Float32Array[], rate: number): Blob {
   return new Blob([view.buffer], { type: "audio/wav" });
 }
 
-function download(blob: Blob, name: string) {
+export function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const link = Object.assign(document.createElement("a"), { href: url, download: name });
   document.body.append(link);

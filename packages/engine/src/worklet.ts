@@ -24,6 +24,8 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private silent = new Float32Array(128);
   private parameterIds: string[] = [];
   private wantsStatus = false;
+  private muted = false;
+  private meterTicks = 0;
   private session = new Session(sampleRate, (chunk: TakeChunk) => {
     const message: FromWorklet = { type: "takeChunk", ...chunk };
     const transfer = [chunk.channels[0].buffer, chunk.channels[1].buffer, ...(chunk.dry ? [chunk.dry.buffer] : [])];
@@ -58,7 +60,23 @@ class MicFxProcessor extends AudioWorkletProcessor {
     switch (message.type) {
       case "set":
         for (const [id, value] of Object.entries(message.values)) engine.setValue(id, value);
+        if ("outputMuted" in message.values) this.muted = (message.values.outputMuted ?? 0) >= 0.5;
         break;
+      case "looper":
+        engine.looperCommand(message.command);
+        break;
+      case "looperLayer":
+        engine.looperLayer(message.layer, message);
+        break;
+      case "looperSettings":
+        engine.looperSettings(message);
+        break;
+      case "looperExport": {
+        const layers = engine.looperLayers();
+        const reply: FromWorklet = { type: "looperLayers", layers, sampleRate };
+        this.port.postMessage(reply, layers.flatMap((l) => [l[0].buffer, l[1].buffer]) as ArrayBuffer[]);
+        break;
+      }
       case "preset":
         engine.resetValues();
         for (const [id, value] of Object.entries(message.values)) engine.setValue(id, value);
@@ -115,6 +133,11 @@ class MicFxProcessor extends AudioWorkletProcessor {
     const right = out[1] ?? left;
     engine.render(mic, left, right);
     this.session.process(left, right, mic, Math.min(mic.length, left.length));
+    if (this.muted) {
+      // The panic button silences the music too, as on the desktop.
+      left.fill(0);
+      right.fill(0);
+    }
 
     if (currentFrame >= this.nextMeterFrame) {
       this.nextMeterFrame = currentFrame + METER_INTERVAL_SECONDS * sampleRate;
@@ -124,6 +147,8 @@ class MicFxProcessor extends AudioWorkletProcessor {
         ...engine.takeMeters(),
         transport: { position: session.position / sampleRate, length: session.length / sampleRate, playing: session.playing },
         recording: session.recordingSeconds,
+        // The looper, with its layers' waveforms 5 times a second while it has a loop.
+        ...(this.wantsStatus ? { looper: engine.looperState(++this.meterTicks % 6 === 0) } : {}),
         ...(this.wantsStatus ? { status: engine.status() } : {}),
       };
       this.port.postMessage(meters);

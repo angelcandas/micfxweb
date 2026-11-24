@@ -49,6 +49,7 @@ sources=(
   "$desktop/src/Presets.cpp"
   "$desktop/src/analysis/Chords.cpp"
   "$desktop/src/analysis/Key.cpp"
+  "$desktop/src/Looper.cpp"
 )
 objects=()
 for src in "${sources[@]}"; do
@@ -63,6 +64,6 @@ done
 
 em++ -O2 -msimd128 ${MICFX_LDFLAGS:-} "${objects[@]}" -o "$out/engine.wasm" \
   -sSTANDALONE_WASM=1 --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 \
-  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key
+  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied
 
 echo "Built $(du -h "$out/engine.wasm" | cut -f1) $out/engine.wasm"

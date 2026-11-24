@@ -277,3 +277,40 @@ describe("key detection", () => {
     expect(key.ok).toBe(false);
   });
 });
+
+describe("looper", () => {
+  it("records a loop and plays it back under the voice", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    expect(engine.looperState().state).toBe("empty");
+
+    expect(engine.looperCommand("main")).toBe(true); // record
+    run(engine, voice(1.0));
+    expect(engine.looperState().state).toBe("recording");
+    engine.looperCommand("main"); // close: plays
+    run(engine, new Float32Array(RATE / 2));
+    const state = engine.looperState(true);
+    expect(state.state).toBe("playing");
+    expect(state.layers).toBe(1);
+    expect(state.length).toBeGreaterThan(0.9);
+    expect(state.overviews?.[0]).toHaveLength(96);
+
+    // Silence in: the loop still plays, under the -1 dB guard.
+    const { left } = run(engine, new Float32Array(RATE));
+    expect(peak(left)).toBeGreaterThan(0.05);
+    expect(peak(left)).toBeLessThanOrEqual(LIMIT + 0.001);
+
+    const layers = engine.looperLayers();
+    expect(layers).toHaveLength(1);
+    expect(layers[0]![0].length).toBe(Math.round(state.length * RATE));
+    expect(peak(layers[0]![0])).toBeGreaterThan(0.05);
+
+    engine.looperLayer(0, { muted: true });
+    engine.looperSettings({ bpm: 96, locked: true, volume: 0.5 });
+    expect(engine.looperState()).toMatchObject({ bpm: 96, locked: true, volume: 0.5, mutes: [true, false, false, false] });
+
+    engine.looperCommand("clear");
+    run(engine, new Float32Array(BLOCK * 4));
+    expect(engine.looperState().state).toBe("empty");
+    engine.dispose();
+  });
+});

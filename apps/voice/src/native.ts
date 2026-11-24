@@ -9,7 +9,8 @@ import type { LiveEngine } from "@micfx/engine";
 import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
-import { Tracks } from "./tracks";
+import { Tracks, encodeWav, download } from "./tracks";
+import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
 
@@ -20,6 +21,7 @@ const SESSION_KEY = "micfx.session";
 const SESSION_SAVE_MS = 400;
 const RECORD_DRY_PREF = "micfx.record.dry";
 const MIDI_KEY = "micfx.midi";
+const LOOPER_KEY = "micfx.looper";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -52,6 +54,26 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   let recording = false;
   let stopping: Promise<unknown> | undefined;
   let lastTakeResult: unknown = null;
+
+  // The looper plays in the worklet's engine. Its tempo, lock and volume are app
+  // preferences, like on the desktop; the shadow engine answers while the sound is off.
+  const looperPrefs = (() => {
+    try {
+      return JSON.parse(storage()?.getItem(LOOPER_KEY) ?? "{}") as { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number };
+    } catch {
+      return {};
+    }
+  })();
+  shadow.looperSettings(looperPrefs);
+  let looperState: LooperState = shadow.looperState();
+  const saveLooperPrefs = () => {
+    const { bpm, beatsPerBar, locked, volume } = looperState;
+    try {
+      storage()?.setItem(LOOPER_KEY, JSON.stringify({ bpm, beatsPerBar, locked, volume }));
+    } catch {
+      // not kept
+    }
+  };
 
   // The last session (values, order, preset) comes back, as the desktop app's state does.
   const restore = () => {
@@ -132,7 +154,11 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     else if (action === "scene.previous") scenes.handle("step", { delta: -1 });
     else scenes.handle("recall", { index: Number(action.slice("scene.".length)) - 1 });
   };
-  midiMap.onAction = (action) => backend?.emit("midiAction", action);
+  midiMap.onAction = (action) => {
+    const command = action.startsWith("looper.") ? action.slice("looper.".length) : "";
+    if (["main", "stop", "play", "undo", "redo", "clear"].includes(command)) audio.looper(command as "main");
+    else backend?.emit("midiAction", action);
+  };
   let midiConnected: Promise<boolean> | undefined;
   const connectMidiOnce = () => (midiConnected ??= connectMidi((data) => midiMap.receive(data)).then((ok) => {
     if (!ok) midiConnected = undefined; // ask again next time
@@ -177,6 +203,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       .then(async () => {
         pushToAudio();
         audio.wantStatus(true);
+        audio.looperSettings(looperPrefs);
         transport = { ...transport, playing: false };
         await tracks.pushAll();
         audio.transport("seek", transport.position);
@@ -209,6 +236,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   audio.onMeters = (meters) => {
     lastMeters = meters;
     if (meters.transport) transport = meters.transport;
+    if (meters.looper) looperState = { ...meters.looper, overviews: meters.looper.overviews ?? looperState.overviews };
     if ("status" in meters && meters.status) status = meters.status as unknown as Record<string, unknown>;
   };
 
@@ -250,6 +278,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     capture: -1,
     transport: { ...transport, length: Math.max(transport.length, tracks.length), loading: tracks.loading },
     scenes: scenes.describe(),
+    looper: looperState,
   });
 
   const functions: Record<string, NativeFunction> = {
@@ -390,7 +419,46 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     soundCheck: () => ({ phase: "idle", styles: [], style: 0 }),
     daw: () => null,
     practice: () => null,
-    looper: () => null,
+    looper: async (action = "status", options: Record<string, unknown> = {}) => {
+      const commands = ["main", "stop", "play", "undo", "redo", "clear"] as const;
+      const command = commands.find((c) => c === action);
+      if (command) {
+        if (command === "main") await startAudio(); // a click: it may start the sound
+        audio.looper(command);
+      }
+      if (action === "layer" && typeof options.layer === "number") {
+        const layer = { gain: typeof options.gain === "number" ? options.gain : undefined, muted: typeof options.muted === "boolean" ? options.muted : undefined };
+        audio.looperLayer(options.layer, layer);
+        if (layer.gain !== undefined) looperState.gains[options.layer] = layer.gain;
+        if (layer.muted !== undefined) looperState.mutes[options.layer] = layer.muted;
+      }
+      if (action === "settings") {
+        const settings = {
+          bpm: typeof options.bpm === "number" ? options.bpm : undefined,
+          beatsPerBar: typeof options.beatsPerBar === "number" ? options.beatsPerBar : undefined,
+          locked: typeof options.locked === "boolean" ? options.locked : undefined,
+          volume: typeof options.volume === "number" ? Math.min(2, Math.max(0, options.volume)) : undefined,
+        };
+        for (const [key, value] of Object.entries(settings)) if (value !== undefined) (looperPrefs as Record<string, unknown>)[key] = value;
+        shadow.looperSettings(settings);
+        audio.looperSettings(settings);
+        looperState = { ...looperState, ...Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined)) };
+        saveLooperPrefs();
+      }
+      if (action === "save") {
+        const { layers, sampleRate } = await audio.looperLayers();
+        if (!layers.length) return { ok: false, error: "Record a loop first.", files: [], folder: "" };
+        const base = `Loop ${new Date().toISOString().slice(0, 19).replace("T", " ").replace(/:/g, "-")}`;
+        const files = layers.map((layer, i) => {
+          const name = `${base} - layer ${i + 1}.wav`;
+          download(encodeWav(layer, sampleRate), name);
+          return name;
+        });
+        return { ok: true, error: "", files, folder: "your downloads" };
+      }
+      if (action === "sendToDaw") return { ok: false, error: "Sending loops to the DAW comes with MicFX DAW.", files: [], folder: "" };
+      return looperState;
+    },
     liveHistory: (action?: string, name?: string) => {
       if (action === "undo") history.undo();
       if (action === "redo") history.redo();

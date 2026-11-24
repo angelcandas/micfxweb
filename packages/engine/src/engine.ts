@@ -45,6 +45,30 @@ export interface KeyEstimate {
   confidence: number;
 }
 
+/** The looper's buttons, as the desktop's Looper::Command. */
+export const LOOPER_COMMANDS = ["main", "stop", "play", "undo", "redo", "clear"] as const;
+export type LooperCommand = (typeof LOOPER_COMMANDS)[number];
+
+/** The desktop's describeLooper(). Times in seconds. */
+export interface LooperState {
+  state: "empty" | "recording" | "closing" | "playing" | "overdubbing" | "stopped";
+  layers: number;
+  redo: number;
+  maxLayers: number;
+  length: number;
+  position: number;
+  closing: number;
+  maxSeconds: number;
+  bpm: number;
+  beatsPerBar: number;
+  locked: boolean;
+  volume: number;
+  gains: number[];
+  mutes: boolean[];
+  /** Each layer's 96 peaks, when asked for. */
+  overviews?: number[][];
+}
+
 export interface EngineStatus {
   /** The sung note (MIDI, fractional), -1 when none. */
   note: number;
@@ -70,6 +94,12 @@ interface Exports {
   malloc(bytes: number): number;
   free(pointer: number): void;
   micfx_detect_key(samples: number, frames: number, sampleRate: number): number;
+  micfx_looper_command(engine: number, command: number): number;
+  micfx_looper_layer(engine: number, layer: number, gain: number, muted: number): void;
+  micfx_looper_settings(engine: number, bpm: number, beatsPerBar: number, locked: number, volume: number): void;
+  micfx_looper_state(engine: number, withOverview: number): number;
+  micfx_looper_copy(engine: number, layer: number): number;
+  micfx_looper_copied(engine: number, channel: number): number;
   micfx_text(): number;
   micfx_result(): number;
   micfx_parameter_info(engine: number): number;
@@ -244,6 +274,36 @@ export class LiveEngine {
     const at = this.x.micfx_meters(this.handle);
     const m = new Float32Array(this.x.memory.buffer, at, 3);
     return { input: m[0]!, output: m[1]!, latencySamples: m[2]! };
+  }
+
+  /** A looper button; false when the command queue is full. */
+  looperCommand(command: LooperCommand): boolean {
+    const index = LOOPER_COMMANDS.indexOf(command);
+    return index >= 0 && this.x.micfx_looper_command(this.handle, index) === 1;
+  }
+
+  looperLayer(layer: number, options: { gain?: number; muted?: boolean }): void {
+    this.x.micfx_looper_layer(this.handle, layer, options.gain ?? -1, options.muted === undefined ? -1 : options.muted ? 1 : 0);
+  }
+
+  looperSettings(options: { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }): void {
+    this.x.micfx_looper_settings(this.handle, options.bpm ?? -1, options.beatsPerBar ?? -1, options.locked === undefined ? -1 : options.locked ? 1 : 0, options.volume ?? -1);
+  }
+
+  looperState(withOverview = false): LooperState {
+    return JSON.parse(this.readResult(this.x.micfx_looper_state(this.handle, withOverview ? 1 : 0))) as LooperState;
+  }
+
+  /** One pass of every looper layer, stereo (for saving them). */
+  looperLayers(): [Float32Array, Float32Array][] {
+    const layers: [Float32Array, Float32Array][] = [];
+    for (let layer = 0; layer < 4; ++layer) {
+      const frames = this.x.micfx_looper_copy(this.handle, layer);
+      if (!frames) break;
+      const channel = (c: number) => new Float32Array(this.x.memory.buffer, this.x.micfx_looper_copied(this.handle, c), frames).slice();
+      layers.push([channel(0), channel(1)]);
+    }
+    return layers;
   }
 
   /** The key of a song (mono samples). Takes a moment: a few hundred ms for a song. */
