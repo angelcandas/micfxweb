@@ -184,9 +184,11 @@ struct Host
                                               [this] { return (juce::int64) roundTripLatency.load(); });
         bridge->inputNames = [this]
         {
+            // The page's names for the open inputs (its devices' channels), else numbers.
+            const juce::ScopedLock sl (inputNamesLock);
             juce::StringArray names;
             for (int i = 0; i < pump->inputChannels.load(); ++i)
-                names.add ("Input " + juce::String (i + 1));
+                names.add (i < pageInputNames.size() && pageInputNames[i].isNotEmpty() ? pageInputNames[i] : "Input " + juce::String (i + 1));
             return names;
         };
 
@@ -260,7 +262,13 @@ struct Host
 
         if (name == "daw")
         {
+            // A render for MicFX Voice (apps/daw/src/partner.ts) leaves the export panel's
+            // choices (folder, format...) as they were.
+            const auto handoff = text (0) == "export" && (bool) arg (1).getProperty ("handoff", false);
+            const auto exportOptions = settings.getValue ("dawExportOptions");
             bridge->handle (text (0), arg (1).isObject() ? arg (1) : juce::var (new juce::DynamicObject()), complete);
+            if (handoff)
+                settings.setValue ("dawExportOptions", exportOptions);
         }
         else if (name == "getParameterDefaults")
         {
@@ -485,6 +493,8 @@ struct Host
     std::unique_ptr<AudioPump> pump;
     std::unique_ptr<WebHistory> history;
     std::atomic<int> roundTripLatency { 0 };
+    juce::StringArray pageInputNames;
+    juce::CriticalSection inputNamesLock;
 };
 
 std::unique_ptr<Host> host;
@@ -640,6 +650,15 @@ EMSCRIPTEN_KEEPALIVE void micfx_daw_audio_settings (int targetFrames, int inputC
 
 // -> the engine's load (0..1 of the real-time budget, averaged) * 1000
 EMSCRIPTEN_KEEPALIVE int micfx_daw_load() { return host == nullptr ? 0 : (int) (host->pump->loadAverage.load() * 1000.0); }
+
+// The names of the page's inputs, newline-separated (see engine.ts connectInput).
+EMSCRIPTEN_KEEPALIVE void micfx_daw_input_names (const char* names)
+{
+    if (host == nullptr)
+        return;
+    const juce::ScopedLock sl (host->inputNamesLock);
+    host->pageInputNames = juce::StringArray::fromLines (juce::String::fromUTF8 (names));
+}
 
 EMSCRIPTEN_KEEPALIVE void micfx_daw_midi (int status, int data1, int data2)
 {

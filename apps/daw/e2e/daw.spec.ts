@@ -202,3 +202,83 @@ test("plays from MIDI: learn a pedal for play, and send MIDI clock", async ({ pa
   await page.keyboard.press("Space");
   await expect.poll(sent).toContain(0xfc);
 });
+
+test("records from several inputs: two devices give tracks more inputs", async ({ page }) => {
+  await open(page);
+  await page.mouse.click(900, 450);
+  await page.locator(".web-saved").click();
+  await page.getByRole("menuitem", { name: /Audio inputs/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Audio inputs" });
+  const boxes = dialog.getByRole("checkbox");
+  await expect(boxes.first()).toBeVisible();
+  const count = await boxes.count();
+  test.skip(count < 2, "this browser offers one fake input");
+  await boxes.nth(0).check();
+  await boxes.nth(1).check();
+  await page.screenshot({ path: "test-results/audio-inputs.png" });
+  await dialog.getByRole("button", { name: "Use these inputs" }).click();
+  await expect(dialog).toBeHidden();
+  const names = await page.evaluate(() => (window as unknown as { micfxDaw: { inputNames: string[] } }).micfxDaw.inputNames);
+  expect(names.length).toBeGreaterThanOrEqual(2);
+  // The tracks' input pickers offer them by name.
+  await expect.poll(async () => JSON.stringify(await session(page))).toContain(names[1]!);
+});
+
+// A stand-in MicFX Voice on another origin, speaking the hand-off protocol (packages/handoff).
+const VOICE_STUB = `<!doctype html><meta charset="utf-8"><title>Voice stub</title><body><script>
+  window.received = null;
+  const id = new URLSearchParams(location.search).get("handoff");
+  if (id && window.opener) {
+    addEventListener("message", (e) => {
+      if (e.data?.type !== "micfx-handoff" || e.data.id !== id) return;
+      window.received = { origin: e.origin, from: e.data.payload.from, items: e.data.payload.items.map((i) => ({ kind: i.kind, name: i.name, bytes: i.data?.byteLength, role: i.role })) };
+      e.source.postMessage({ type: "micfx-handoff-done", id, ok: true }, e.origin);
+    });
+    window.opener.postMessage({ type: "micfx-handoff-ready", id }, "*");
+  }
+  window.sendTo = (url, items) => new Promise((resolve) => {
+    const id = "t" + Date.now();
+    const target = window.open(url + "?handoff=" + id, "micfx-daw");
+    addEventListener("message", (e) => {
+      if (e.source !== target || e.data?.id !== id) return;
+      if (e.data.type === "micfx-handoff-ready") target.postMessage({ type: "micfx-handoff", id, payload: { from: "voice", items } }, e.origin);
+      if (e.data.type === "micfx-handoff-done") resolve(e.data);
+    });
+  });
+</script>`;
+
+test("takes recordings sent from MicFX Voice, and sends the mix back", async ({ page, context }) => {
+  await context.route("http://localhost:4173/**", (route) => route.fulfill({ contentType: "text/html", body: VOICE_STUB }));
+  const { readFileSync } = await import("node:fs");
+  const wav = [...readFileSync(voice)];
+
+  // Voice -> DAW: the DAW opens with the take on a new track.
+  await page.goto("http://localhost:4173/");
+  const opened = context.waitForEvent("page");
+  const answer = page.evaluate((bytes) => (window as unknown as { sendTo(u: string, i: unknown[]): Promise<{ ok: boolean }> })
+    .sendTo("http://localhost:4175/handoff.html", [{ kind: "audio", name: "Take 1.wav", data: new Uint8Array(bytes).buffer, role: "take" }]), wav);
+  expect((await answer).ok).toBe(true);
+  const daw = await opened;
+  await expect.poll(async () => daw.url()).toMatch(/localhost:4175\/(\?|$)/);
+  await expect(daw.locator(".app-title")).toHaveText("MicFX DAW", { timeout: 20_000 });
+  await expect.poll(async () => ((await session(daw)).tracks ?? []).map((t) => t.name).join(","), { timeout: 15_000 }).toContain("Take 1");
+  await expect(daw.locator(".web-saved")).toHaveText(/MicFX Voice|Saved/);
+  await daw.screenshot({ path: "test-results/handoff-received.png" });
+
+  // DAW -> Voice: the mix, through the hand-off window.
+  await daw.mouse.click(900, 450);
+  await daw.locator(".web-saved").click();
+  const relayOpened = context.waitForEvent("page");
+  await daw.getByRole("menuitem", { name: /Send the mix to MicFX Voice/ }).click();
+  const relay = await relayOpened;
+  const send = relay.getByRole("button", { name: "Send to MicFX Voice" });
+  await expect(send).toBeVisible({ timeout: 30_000 });
+  const voiceOpened = context.waitForEvent("page");
+  await send.click();
+  const voicePage = await voiceOpened;
+  await expect.poll(() => voicePage.evaluate(() => (window as unknown as { received: unknown }).received), { timeout: 15_000 }).toMatchObject({
+    origin: "http://localhost:4175", from: "daw", items: [{ kind: "audio", name: "My Song.wav", role: "mix" }],
+  });
+  const received = await voicePage.evaluate(() => (window as unknown as { received: { items: { bytes: number }[] } }).received);
+  expect(received.items[0]!.bytes).toBeGreaterThan(10_000);
+});

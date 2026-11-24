@@ -146,6 +146,9 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
     case "midi":
       m._micfx_daw_midi(message.status, message.data1, message.data2);
       break;
+    case "inputNames":
+      m.ccall("micfx_daw_input_names", null, ["string"], [message.names.join("\n")]);
+      break;
     default:
       fileCommand(message);
   }

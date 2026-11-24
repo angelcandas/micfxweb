@@ -4,7 +4,9 @@
 import { JuceBackend, type ParameterInfo } from "@micfx/bridge";
 import { createChooser, download } from "./chooser";
 import { DawEngine } from "./engine";
+import { connectSavedInputs, showInputs } from "./inputs";
 import { showMidiDevices, WebMidi } from "./midi";
+import { sendMixToVoice, takeInbox } from "./partner";
 import { addAutosaveStatus, flushOnHide } from "./versions";
 import "./web.css";
 
@@ -44,6 +46,7 @@ async function boot() {
   backend.install();
 
   let autosave: ReturnType<typeof addAutosaveStatus> | undefined;
+  let handoffExport: ((path: string | undefined) => void) | undefined;
   const midi = new WebMidi(engine, flashMidi);
   engine.onEvent = (name, payload) => {
     if (name === "webSaved") { autosave?.saved((payload as { time: number }).time); return; }
@@ -54,7 +57,11 @@ async function boot() {
       midi.setTempo(session.tempo);
       if (session.tracks?.some((t) => t.kind === "midi" && t.arm)) void midi.start();
     }
-    if (name === "dawExport") void downloadExport(engine, payload as { done?: boolean; files?: string[]; error?: string });
+    if (name === "dawExport") {
+      const result = payload as { done?: boolean; files?: string[]; error?: string };
+      if (result.done && handoffExport) { handoffExport(result.error || !result.files?.[0] ? undefined : result.files[0]); handoffExport = undefined; }
+      else void downloadExport(engine, result);
+    }
     if (name === "dawSession") void followArming(engine, payload as { tracks?: { arm?: boolean }[] });
   };
   engine.onChooser = createChooser(engine);
@@ -82,11 +89,23 @@ async function boot() {
   if (title) title.textContent = "MicFX DAW";
   addSourceLink();
   autosave = addAutosaveStatus(engine, [
+    { label: "Audio inputs…", hint: "Microphones and interfaces to record from, several at once", action: () => showInputs(engine, () => void engine.call("daw", ["session", {}]).then((s) => backend.emit("dawSession", s))) },
+    {
+      label: "Send the mix to MicFX Voice…",
+      hint: "Sing or practise over this song in MicFX Voice",
+      action: async () => {
+        const session = (await engine.call("daw", ["session", {}])) as { project?: { name?: string } };
+        await sendMixToVoice(engine, session.project?.name ?? "Song", () => new Promise((resolve) => { handoffExport = resolve; }));
+      },
+    },
     { label: "MIDI devices…", hint: "Keyboards and controllers to play with, and where to send MIDI clock", action: () => showMidiDevices(midi) },
   ]);
   // MIDI learn and MIDI tracks need MIDI: asked for when the MIDI button is first used.
   document.querySelector(".midi-button")?.addEventListener("click", () => void midi.start(), { capture: true });
   void midi.startIfAllowed();
+
+  // Takes MicFX Voice sent (handoff.html opened the DAW with them).
+  void takeInbox(engine).then((said) => { if (said) autosave?.say(said); }).catch((error) => console.warn("MicFX DAW: couldn't take what MicFX Voice sent", error));
   flushOnHide(engine);
 
   // Browsers start sound only after a click or a key.
@@ -131,7 +150,7 @@ let interacted = false;
 async function followArming(engine: DawEngine, session?: { tracks?: { arm?: boolean }[] }) {
   if (session) lastSession = session;
   if (!interacted || engine.inputChannels > 0 || !lastSession.tracks?.some((t) => t.arm)) return;
-  await engine.connectInput();
+  await connectSavedInputs(engine);
 }
 
 // MicFX is free software (AGPLv3): the page says so and links to its source.

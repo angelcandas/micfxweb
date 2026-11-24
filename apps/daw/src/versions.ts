@@ -41,6 +41,7 @@ export function addAutosaveStatus(engine: DawEngine, extras: MenuItem[] = []) {
   setInterval(refresh, 5000);
   return {
     saved(time: number) { savedAt = time; refresh(); },
+    say(text: string) { button.textContent = text; },
   };
 }
 

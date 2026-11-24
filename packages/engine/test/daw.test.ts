@@ -15,6 +15,7 @@ interface DawModule {
 let m: DawModule;
 const pending = new Map<number, (value: unknown) => void>();
 const events: string[] = [];
+const autoMixEvents: Record<string, unknown>[] = [];
 const exportEvents: { progress?: number; done?: boolean; cancelled?: boolean; error?: string; files?: string[] }[] = [];
 let nextId = 1;
 let timers: ReturnType<typeof setInterval>[] = [];
@@ -41,7 +42,7 @@ beforeAll(async () => {
   const { default: createDawModule } = await import(/* @vite-ignore */ url);
   m = await createDawModule({
     onDawComplete: (id: number, json: string) => { pending.get(id)?.(JSON.parse(json)); pending.delete(id); },
-    onDawEvent: (name: string, json: string) => { events.push(name); if (name === "dawExport") exportEvents.push(JSON.parse(json)); },
+    onDawEvent: (name: string, json: string) => { events.push(name); if (name === "dawExport") exportEvents.push(JSON.parse(json)); if (name === "dawAutoMix") autoMixEvents.push(JSON.parse(json)); },
     onDawChooser: () => {},
     onDawClipboard: () => {},
     print: () => {},
@@ -189,6 +190,19 @@ describe("daw.wasm", () => {
     for (let i = 0; i < 300 && !exportEvents.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 50));
     expect(exportEvents.find((e) => e.done)).toBeTruthy();
   });
+
+  it("listens to the tracks for Auto Mix on several threads", async () => {
+    // A second track with the same voice, so there's more than one to listen to.
+    await daw("importFile", { file: "/home/web/Music/voice.wav", track: -1 });
+    autoMixEvents.length = 0;
+    const started = await daw("autoMix", { action: "analyse" });
+    expect(started).toMatchObject({ ok: true });
+    for (let i = 0; i < 600 && !autoMixEvents.some((e) => e.state === "ready" || e.state === "error"); i++) await new Promise((r) => setTimeout(r, 50));
+    const ready = autoMixEvents.find((e) => e.state === "ready" || e.state === "error")!;
+    expect(ready.state).toBe("ready");
+    expect(Array.isArray(ready.moves)).toBe(true);
+    expect((ready.tracks as unknown[]).length).toBeGreaterThanOrEqual(2);
+  }, 60_000);
 
   it("sends the session and status to the page", () => {
     expect(events).toContain("dawSession");
