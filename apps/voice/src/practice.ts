@@ -7,6 +7,7 @@
 // tap (the mic before the effects) is scored against it by the desktop's scoring
 // (analysis.wasm on the page), and the page hears back on the desktop's events.
 import type { PracticeLyrics, PracticeScores, PracticeSong, SongSection } from "@micfx/engine/analysis";
+import { HISTORY, addPass, parsePasses, passFrom, type Pass } from "./practice-history";
 
 /** How the analysis on the page scores (Analysis from @micfx/engine/analysis). */
 export interface PracticeScorer {
@@ -137,6 +138,12 @@ export class Practice {
   private shiftToken = 0;
   private loopState: Loop | undefined;
   private playing = false;
+  /** This song's whole passes, oldest first. */
+  private passes: Pass[] = [];
+  /** What you sang this pass: [song time, midi] pairs, for the result card. */
+  private trail: number[] = [];
+  /** Who hears each pitch reading (the range finder): MIDI, 0 where none. */
+  private pitchListeners = new Set<(midi: number) => void>();
 
   constructor(private readonly host: PracticeHost) {
     try {
@@ -305,8 +312,11 @@ export class Practice {
     this.lastPosition = position;
 
     // The song stopped after some singing: the report for the pass.
-    if (this.wasPlaying && !playing && scorer && scorer.scoreChanges(true)?.phrases.some((p) => p.scored))
-      this.host.emit("practiceReport", scorer.scoreReport());
+    if (this.wasPlaying && !playing && scorer && scorer.scoreChanges(true)?.phrases.some((p) => p.scored)) {
+      const report = scorer.scoreReport();
+      this.recordPass(report);
+      this.host.emit("practiceReport", report);
+    }
     this.wasPlaying = playing;
 
     const frames: number[] = [];
@@ -314,8 +324,12 @@ export class Practice {
     for (let i = 0; pitch && i + 2 < pitch.length; i += 3) {
       const time = pitch[i]! / sampleRate - latency;
       lastMidi = pitch[i + 2]! > -60 ? pitch[i + 1]! : 0;
+      for (const listener of this.pitchListeners) listener(lastMidi);
       // (readings from before a jump, still on their way, are left out)
-      if (playing && time >= this.lastSongTime - 0.5 && time <= songTime + 0.1) frames.push(round3(time), round2(lastMidi));
+      if (playing && time >= this.lastSongTime - 0.5 && time <= songTime + 0.1) {
+        frames.push(round3(time), round2(lastMidi));
+        if (lastMidi > 0 && !this.loopState && time > (this.trail.at(-2) ?? -1) + 0.04 && this.trail.length < 60000) this.trail.push(round3(time), round2(lastMidi));
+      }
     }
 
     if (scorer && playing) scorer.scoreFrames(Float64Array.from(frames), songTime);
@@ -635,6 +649,8 @@ export class Practice {
       // found again when asked
     }
     this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections };
+    this.trail = [];
+    this.passes = parsePasses(await (await this.host.store.read(folder, HISTORY))?.text().catch(() => undefined));
     this.shift = { speed: 1, semitones: 0 };
     this.pending = undefined;
     this.shiftToken++;
@@ -647,6 +663,10 @@ export class Practice {
 
   private restartFrom(songTime: number) {
     if (this.current) this.scorer?.scoreRestart(songTime);
+    // What was sung from here on is sung again.
+    let keep = 0;
+    while (keep < this.trail.length && this.trail[keep]! < songTime) keep += 2;
+    this.trail.length = keep;
     this.lastSongTime = songTime;
   }
 
@@ -699,6 +719,77 @@ export class Practice {
   private describeJob() {
     const job = this.job;
     return job ? { phase: job.phase, progress: round3(job.progress), name: job.name } : null;
+  }
+
+  /** A whole pass: kept with the song. */
+  private recordPass(report: Record<string, unknown>) {
+    const current = this.current;
+    const pass = current ? passFrom(report, this.now(), this.shift) : undefined;
+    if (!current || !pass) return;
+    this.passes = addPass(this.passes, pass);
+    void this.host.store.write(current.folder, HISTORY, JSON.stringify(this.passes)).catch(() => {});
+  }
+
+  /** Each pitch reading while Practice is open; returns the way to stop. */
+  listenPitch(listener: (midi: number) => void): () => void {
+    this.pitchListeners.add(listener);
+    return () => this.pitchListeners.delete(listener);
+  }
+
+  /** The song's notes as recorded (lowest, highest MIDI) and the key and speed it plays in. */
+  songRange(): { name: string; lowest: number; highest: number; semitones: number; speed: number } | undefined {
+    const current = this.current;
+    if (!current || !current.base.notes.length) return undefined;
+    return { name: current.info.name, lowest: current.base.lowest, highest: current.base.highest, semitones: this.shift.semitones, speed: this.shift.speed };
+  }
+
+  /** Plays the song in another key (and speed), as the Key menu does. */
+  setShift(semitones: number, speed = this.shift.speed): Promise<unknown> {
+    return this.handle("speed", { speed, semitones });
+  }
+
+  /**
+   * A song made here (a warm-up): its guide voice, backing and melody are known, so it's
+   * kept and opened like a prepared song without listening for the melody.
+   */
+  async prepareMade(made: { name: string; key: string; seconds: number; guide: Float32Array; backing?: [Float32Array, Float32Array]; melody: string }): Promise<boolean> {
+    if (this.job) this.job.cancelled = true;
+    this.job = undefined;
+    try {
+      const guide = this.host.encodeWav([made.guide], RATE);
+      const backing = made.backing ? this.host.encodeWav(made.backing, RATE) : undefined;
+      const folder = `${await fileId(new Blob([guide, made.melody]))}${backing ? "" : "-voice"}`;
+      const info: Info = { name: made.name, key: made.key, seconds: round3(made.seconds), voiceOnly: !backing, opened: this.now(), guide: GUIDE, backing: backing ? BACKING : "" };
+      if (!(await this.loadFolder(folder))) {
+        await this.host.store.write(folder, GUIDE, guide);
+        if (backing) await this.host.store.write(folder, BACKING, backing);
+        await this.host.store.write(folder, MELODY, made.melody);
+        await this.host.store.write(folder, INFO, JSON.stringify(info));
+      }
+      const error = await this.install(folder, info, made.melody);
+      if (error) {
+        this.host.emit("practice", { state: "error", error });
+        return false;
+      }
+      this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.host.emit("practice", { state: "error", error: /quota/i.test(message) ? "This browser has no room left to keep the song." : `Couldn't make ${made.name}: ${message}` });
+      return false;
+    }
+  }
+
+  /** The song's passes, for the progress chart. */
+  history(): { name: string; passes: Pass[] } | undefined {
+    return this.current ? { name: this.current.info.name, passes: this.passes } : undefined;
+  }
+
+  /** What the result card shows: the song, its notes as they play, the report and what you sang. */
+  card(): { name: string; key: string; shift: Shift; notes: number[]; trail: number[]; report: Record<string, unknown> } | undefined {
+    const current = this.current;
+    if (!current || !this.scorer) return undefined;
+    return { name: current.info.name, key: current.info.key, shift: { ...this.shift }, notes: current.song.notes, trail: [...this.trail], report: this.scorer.scoreReport() };
   }
 
   private persist() {

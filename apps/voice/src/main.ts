@@ -10,6 +10,8 @@ import { addAccessibility } from "./a11y";
 import { addLanguage } from "./i18n";
 import { addMicHelp } from "./mic-help";
 import { addPhoneLayout } from "./phone";
+import { addPracticeProgress } from "./practice-progress";
+import { addPracticeTools } from "./practice-tools";
 import { addTabAudioNote } from "./tab-audio";
 import { addVideo } from "./video";
 import { registerOffline } from "./update";
@@ -59,6 +61,8 @@ async function boot() {
   addMicHelp();
   addAccessibility();
   addPhoneLayout();
+  addPracticeProgress(native.web.practice);
+  addPracticeTools(native.web.practice, native.web.startAudio);
   addLanguage();
   native.started();
   openSharedSound(native.web);
