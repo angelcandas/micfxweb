@@ -48,6 +48,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   let muted = false;
   let dry = false;
   let lastOrder = shadow.getOrder().join(",");
+  const defaultOrder = shadow.getOrder();
+  const defaults = Object.fromEntries(ids.map((id) => [id, parameters[id]!.default]));
   let lastMeters: LiveMeters = { input: 0, output: 0, latencySamples: 0 };
   let status: Record<string, unknown> = {};
   let starting: Promise<unknown> | undefined;
@@ -105,16 +107,26 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     }
   };
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  const saveSoon = () => {
+  let held = false; // a backup is being restored: nothing here may write over it
+  const saveNow = () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      try {
-        storage()?.setItem(SESSION_KEY, JSON.stringify({ values: allValues(), order: shadow.getOrder(), preset: currentPreset, scenes: scenes.save() }));
-      } catch {
-        // Storage full or blocked: the session just isn't kept.
-      }
-    }, SESSION_SAVE_MS);
+    saveTimer = undefined;
+    if (held) return;
+    try {
+      storage()?.setItem(SESSION_KEY, JSON.stringify({ values: allValues(), order: shadow.getOrder(), preset: currentPreset, scenes: scenes.save() }));
+    } catch {
+      // Storage full or blocked: the session just isn't kept.
+    }
   };
+  // At most every SESSION_SAVE_MS, with the values as they are then (a timer that restarted on
+  // each change never fired while the page kept echoing values back).
+  const saveSoon = () => {
+    saveTimer ??= setTimeout(saveNow, SESSION_SAVE_MS);
+  };
+  // A change just before the page closes or reloads is kept too.
+  addEventListener("pagehide", () => {
+    if (saveTimer !== undefined) saveNow();
+  });
 
   // Undo/redo and scenes work on the parameters the way the page's own controls do.
   const access: ParameterAccess = {
@@ -382,19 +394,17 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   };
 
   // The setup strip asks for the audio state every second, so changes show without a nudge.
-  const library = createLibrary({
-    shadow,
-    values: allValues,
-    apply: (values, order) => {
-      shadow.resetValues();
-      for (const [id, value] of Object.entries(values)) if (id in parameters && id !== "inputGain") shadow.setValue(id, value);
-      shadow.setOrder(order);
-      currentPreset = -1;
-      pushToAudio();
-      syncPage();
-      saveSoon();
-    },
-  });
+  /** Plays a whole sound: its values over the defaults (the mic's level stays), and its order. */
+  const applySound = (values: Record<string, number>, order: string[]) => {
+    shadow.resetValues();
+    for (const [id, value] of Object.entries(values)) if (id in parameters && id !== "inputGain") shadow.setValue(id, value);
+    shadow.setOrder(order);
+    currentPreset = -1;
+    pushToAudio();
+    syncPage();
+    saveSoon();
+  };
+  const library = createLibrary({ shadow, values: allValues, apply: applySound });
 
   const settings = createAudioSettings(audio, () => startAudio(), () => {});
 
@@ -659,6 +669,21 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
   return {
     functions,
+    /** For the web's own panels (web-panels.ts): the sound as it is, and the kept tracks. */
+    web: {
+      tracks,
+      sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
+      applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),
+      /** Saves the session now, if a change is waiting (before a backup). */
+      flush: () => {
+        if (saveTimer !== undefined) saveNow();
+      },
+      /** Stops saving the session, before a backup replaces it. */
+      hold: () => {
+        held = true;
+        clearTimeout(saveTimer);
+      },
+    },
     attach(b: JuceBackend) {
       backend = b;
       for (const id of ids) b.setParameter(id, shadow.getValue(id) ?? parameters[id]!.default);
