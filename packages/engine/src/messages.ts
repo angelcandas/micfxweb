@@ -24,6 +24,8 @@ export type ToWorklet =
   | { type: "loop"; from?: number; to?: number }
   /** Starts a take (and plays; after a count-in of `countIn` bars), or ends it: "takeChunk"s then "takeEnd" follow. */
   | { type: "record"; on: boolean; dry?: boolean; countIn?: number }
+  /** Plays the calibration clicks and records them back: "calibration" follows. */
+  | { type: "calibrate" }
   /** The click: on or off, its tempo, beats in a bar and level. */
   | ({ type: "metronome" } & MetronomeSettings)
   /** The looper: a button, a layer's gain or mute, or its tempo and volume. */
@@ -73,5 +75,7 @@ export type FromWorklet =
   | { type: "looperLayers"; layers: [Float32Array, Float32Array][]; sampleRate: number }
   | { type: "micChunk"; samples: Float32Array }
   | { type: "noiseProfileTaken"; ok: boolean }
+  /** The mic while the calibration clicks played, and where they went out (frames). */
+  | { type: "calibration"; mic: Float32Array; clicks: number[]; sampleRate: number }
   /** After the last chunk of a take; undefined fields when nothing was recording. */
   | ({ type: "takeEnd" } & Partial<TakeEnd>);

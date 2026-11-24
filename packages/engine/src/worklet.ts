@@ -3,6 +3,7 @@
 // The page compiles engine.wasm once and passes the WebAssembly.Module in processorOptions;
 // the processor instantiates it synchronously here. Messages from the page set values,
 // the order or a whole preset; meters go back about 30 times a second.
+import { Calibrator } from "./calibration";
 import { instantiateEngineModule, type LiveEngine } from "./engine";
 import type { ToWorklet, FromWorklet } from "./messages";
 import { Session, type TakeChunk } from "./session";
@@ -19,6 +20,7 @@ declare class AudioWorkletProcessor {
 const METER_INTERVAL_SECONDS = 1 / 30;
 
 class MicFxProcessor extends AudioWorkletProcessor {
+  private calibrator: Calibrator | undefined;
   private engine: LiveEngine | undefined;
   private nextMeterFrame = 0;
   private silent = new Float32Array(128);
@@ -124,6 +126,9 @@ class MicFxProcessor extends AudioWorkletProcessor {
         this.port.postMessage(reply);
         break;
       }
+      case "calibrate":
+        this.calibrator = new Calibrator(sampleRate);
+        break;
       case "metronome":
         this.session.metronome.set(message);
         break;
@@ -184,6 +189,15 @@ class MicFxProcessor extends AudioWorkletProcessor {
     engine.setTimeline(this.session.position);
     engine.render(mic, left, right);
     this.session.process(left, right, mic, Math.min(mic.length, left.length));
+    if (this.calibrator) {
+      this.calibrator.process(left, right, mic, Math.min(mic.length, left.length));
+      if (this.calibrator.done) {
+        const { mic: heard, clicks } = this.calibrator.result();
+        const reply: FromWorklet = { type: "calibration", mic: heard, clicks, sampleRate };
+        this.port.postMessage(reply, [heard.buffer as ArrayBuffer]);
+        this.calibrator = undefined;
+      }
+    }
     if (this.muted) {
       // The panic button silences the music too, as on the desktop.
       left.fill(0);

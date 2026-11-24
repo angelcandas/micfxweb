@@ -11,6 +11,7 @@
     "./analysis": "./src/analysis.ts",
     "./stems": "./src/stems.ts",
     "./mp3": "./src/mp3.ts",
+    "./calibration": "./src/calibration.ts",
     "./engine.wasm": "./dist/engine.wasm",
     "./analysis.wasm": "./dist/analysis.wasm",
     "./stems.wasm": "./dist/stems.wasm",
