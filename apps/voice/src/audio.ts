@@ -2,10 +2,12 @@
 import wasmUrl from "@micfx/engine/engine.wasm?url";
 import workletUrl from "@micfx/engine/worklet?worker&url";
 import type { FromWorklet, ToWorklet, Values } from "@micfx/engine/messages";
-import type { Meters, ValueInfo } from "@micfx/engine";
+import { instantiateEngineModule, type FactoryPreset, type Meters, type ParameterInfo, type ValueInfo } from "@micfx/engine";
 
 export interface LiveAudioInfo {
   values: ValueInfo[];
+  parameters: Record<string, ParameterInfo>;
+  presets: FactoryPreset[];
   order: string[];
   sampleRate: number;
 }
@@ -25,9 +27,19 @@ function compileEngine(): Promise<WebAssembly.Module> {
   return compiled;
 }
 
+/** The desktop parameters and factory presets, read from the engine before any audio starts. */
+export async function loadCatalog(): Promise<{ parameters: Record<string, ParameterInfo>; presets: FactoryPreset[] }> {
+  const engine = instantiateEngineModule(await compileEngine()).create(48000, 128);
+  const catalog = { parameters: engine.parameterInfo(), presets: engine.factoryPresets() };
+  engine.dispose();
+  return catalog;
+}
+
 /** Mic -> MicFX engine -> speakers/headphones. */
 export class LiveAudio {
   onMeters: (meters: Meters) => void = () => {};
+  /** Every parameter's value after a preset load. */
+  onValues: (values: Values, order: string[]) => void = () => {};
   private context: AudioContext | undefined;
   private node: AudioWorkletNode | undefined;
   private stream: MediaStream | undefined;
@@ -69,7 +81,10 @@ export class LiveAudio {
     const ready = new Promise<LiveAudioInfo>((resolve, reject) => {
       node.port.onmessage = (event: MessageEvent<FromWorklet>) => {
         const message = event.data;
-        if (message.type === "ready") resolve({ values: message.values, order: message.order, sampleRate: message.sampleRate });
+        if (message.type === "ready") {
+          const { values, parameters, presets, order, sampleRate } = message;
+          resolve({ values, parameters, presets, order, sampleRate });
+        } else if (message.type === "values") this.onValues(message.values, message.order);
         else if (message.type === "error") reject(new Error(message.message));
         else if (message.type === "meters") {
           this.latencySamples = message.latencySamples;
@@ -112,6 +127,11 @@ export class LiveAudio {
     const base = context.baseLatency || 128 / context.sampleRate;
     const output = context.outputLatency || 0;
     return (base * 2 + output + this.latencySamples / context.sampleRate) * 1000;
+  }
+
+  /** A desktop factory preset by index; onValues follows. */
+  loadPreset(index: number): void {
+    this.post({ type: "loadPreset", index });
   }
 
   private post(message: ToWorklet) {

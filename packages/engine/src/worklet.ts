@@ -21,12 +21,22 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private engine: LiveEngine | undefined;
   private nextMeterFrame = 0;
   private silent = new Float32Array(128);
+  private parameterIds: string[] = [];
 
   constructor(options: { processorOptions: { module: WebAssembly.Module } }) {
     super();
     try {
-      this.engine = instantiateEngineModule(options.processorOptions.module).create(sampleRate, 128);
-      const ready: FromWorklet = { type: "ready", values: this.engine.valueInfo(), order: this.engine.getOrder(), sampleRate };
+      const engine = instantiateEngineModule(options.processorOptions.module).create(sampleRate, 128);
+      this.engine = engine;
+      this.parameterIds = Object.keys(engine.parameterInfo());
+      const ready: FromWorklet = {
+        type: "ready",
+        values: engine.valueInfo(),
+        parameters: engine.parameterInfo(),
+        presets: engine.factoryPresets(),
+        order: engine.getOrder(),
+        sampleRate,
+      };
       this.port.postMessage(ready);
     } catch (error) {
       const failed: FromWorklet = { type: "error", message: String(error) };
@@ -50,7 +60,18 @@ class MicFxProcessor extends AudioWorkletProcessor {
       case "order":
         engine.setOrder(message.keys);
         break;
+      case "loadPreset":
+        if (engine.loadPreset(message.index)) this.sendValues();
+        break;
     }
+  }
+
+  private sendValues() {
+    const engine = this.engine!;
+    const values: Record<string, number> = {};
+    for (const id of this.parameterIds) values[id] = engine.getValue(id) ?? 0;
+    const message: FromWorklet = { type: "values", values, order: engine.getOrder() };
+    this.port.postMessage(message);
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
