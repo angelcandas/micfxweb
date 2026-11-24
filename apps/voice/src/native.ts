@@ -20,6 +20,7 @@ import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./l
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
 import { TabAudio, gainOf, mixBacking } from "./tab-audio";
 import { MIC_DENIED_EVENT, micHelp } from "./mic-help";
+import { takeOffered } from "./offered";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -438,8 +439,19 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
   const settings = createAudioSettings(audio, () => startAudio(), () => {});
 
+  // The engine's load (plan point 30): smoothed for the status line, its peak, and the blocks
+  // that ran late (the desktop's "dropouts").
+  const load = { cpu: 0, peak: 0, late: 0, readings: 0, history: [] as number[] };
   audio.onMeters = (meters) => {
     lastMeters = meters;
+    // (the first two seconds are the engine warming up)
+    if (typeof meters.cpu === "number" && Number.isFinite(meters.cpu) && ++load.readings > 60) {
+      load.cpu = load.cpu * 0.8 + meters.cpu * 0.2;
+      load.history.push(meters.cpu);
+      if (load.history.length > 300) load.history.shift(); // about 10 s
+      load.peak = Math.max(...load.history);
+    }
+    if (typeof meters.late === "number") load.late = meters.late;
     if (meters.transport) transport = meters.transport;
     if (meters.looper) looperState = { ...meters.looper, overviews: meters.looper.overviews ?? looperState.overviews };
     if ("status" in meters && meters.status) status = meters.status as unknown as Record<string, unknown>;
@@ -458,8 +470,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       buffer: 128,
       latencyMs: Math.max(0, total - effectsMs),
       effectsMs,
-      cpu: 0,
-      xruns: 0,
+      cpu: running ? Math.round(load.cpu * 1000) / 10 : 0,
+      xruns: load.late,
       // Until the mic is started (a click), the input counts as muted, as the desktop's is
       // until you say you wear headphones.
       inputMuted: !running,
@@ -700,7 +712,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   };
 
   restore();
-  void tracks.restore().then(() => practice.restore());
+  const restored = tracks.restore().then(() => practice.restore());
 
   return {
     functions,
@@ -709,6 +721,10 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       /** Practice: the song's passes and the result card's picture. */
       practice,
       tracks,
+      /** The tracks and Practice song from the last visit are back. */
+      restored,
+      /** For the diagnostics: the sound as it runs. */
+      diagnostics: () => ({ ...describeAudio(), running: audio.running, cpuPeak: Math.round(load.peak * 1000) / 10, roundTripMeasured: audio.measuredRoundTrip() }),
       sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
       applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),
       /** The round trip: measured on this device, or the browser's estimate. */
@@ -763,6 +779,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
 /** Asks for a file (a click); undefined when none was picked. */
 function pickFile(accept: string): Promise<File | undefined> {
+  const dropped = takeOffered();
+  if (dropped) return Promise.resolve(dropped);
   return new Promise((resolve) => {
     const input = Object.assign(document.createElement("input"), { type: "file", accept });
     input.addEventListener("change", () => resolve(input.files?.[0]));

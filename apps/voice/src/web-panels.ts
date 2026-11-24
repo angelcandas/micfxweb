@@ -6,6 +6,7 @@ import { readSoundHash, soundHash } from "./share";
 import { TAKE_FORMATS, type TakeFormat, canEncodeOpus, setTakeFormat, takeFormat } from "./take-format";
 import type { Tracks } from "./tracks";
 import { download } from "./tracks";
+import { takeOffered } from "./offered";
 
 export interface WebHooks {
   tracks: Tracks;
@@ -49,6 +50,8 @@ export function toast(text: string) {
 }
 
 function pickFile(accept: string): Promise<File | undefined> {
+  const dropped = takeOffered();
+  if (dropped) return Promise.resolve(dropped);
   return new Promise((resolve) => {
     const input = Object.assign(document.createElement("input"), { type: "file", accept });
     input.addEventListener("change", () => resolve(input.files?.[0] ?? undefined), { once: true });
@@ -198,6 +201,7 @@ export function addWebSettings(hooks: WebHooks) {
       backupText.textContent = `Couldn't restore: ${error instanceof Error ? error.message : String(error)}`;
     }
   });
+  restoreButton.classList.add("web-restore-button");
   row(backup, "Everything", backupText, backupButton, restoreButton);
   backup.append(html("p", "setup-note", "MicFX keeps your work in this browser only. A backup moves it to another computer or browser, or brings it back after the browser's data is cleared."));
 

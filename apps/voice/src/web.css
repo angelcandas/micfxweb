@@ -203,3 +203,14 @@ body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-moti
   .web-range-status { grid-column: 1 / -1; }
   .web-warmup-form { grid-template-columns: 1fr; }
 }
+
+/* Drag and drop anywhere (drop.ts). */
+.web-drop { position: fixed; inset: 0; z-index: 9000; display: grid; place-items: center; pointer-events: none;
+  background: rgba(8, 10, 16, 0.55); border: 3px dashed var(--accent, #7aa2ff); border-radius: 18px; margin: 8px; }
+.web-drop[hidden] { display: none; }
+.web-drop-label { padding: 14px 22px; border-radius: 12px; background: #1a1e2b; color: #e9ecf4; font-size: 16px; font-weight: 600; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+
+/* Settings › Diagnostics (diagnostics.ts). */
+.web-diagnostics-list { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 10px; font-size: 12.5px; }
+.web-diagnostics-list dt { color: var(--muted, #8f98ad); }
+.web-diagnostics-list dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

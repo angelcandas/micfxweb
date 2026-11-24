@@ -188,6 +188,33 @@ export class Tracks {
     this.onChanged();
   }
 
+  /**
+   * The tracks for MicFX DAW (plan point 28): the takes and the song, each a WAV that starts
+   * at the timeline's start (silence before a later track), so they line up at bar 1. Muted
+   * tracks stay here, unless every track is muted.
+   */
+  async handoffTracks(rate = 48000): Promise<{ name: string; data: ArrayBuffer; role: "take" | "backing" }[]> {
+    const audible = this.tracks.filter((t) => !t.muted);
+    const out = [];
+    for (const track of audible.length ? audible : this.tracks) {
+      const role = track.isTake ? ("take" as const) : ("backing" as const);
+      const base = track.fileName.replace(/\.[^.]+$/, "") || track.name;
+      if (track.start < 1e-3 && /\.wav$/i.test(track.fileName)) {
+        out.push({ name: `${base}.wav`, data: await track.audio.arrayBuffer(), role });
+        continue;
+      }
+      const channels = await decodeChannels(track.audio, rate);
+      const lead = Math.round(track.start * rate);
+      const padded = channels.map((channel) => {
+        const longer = new Float32Array(lead + channel.length);
+        longer.set(channel, lead);
+        return longer;
+      });
+      out.push({ name: `${base}.wav`, data: await encodeWav(padded, rate).arrayBuffer(), role });
+    }
+    return out;
+  }
+
   /** The backing song playing now (the first track that isn't a take). */
   currentBacking(): { name: string; file: Blob } | undefined {
     const song = this.tracks.find((t) => !t.isTake);
