@@ -6,18 +6,10 @@ body[data-platform="web"] :is(
   .loop-toggle,            /* looper and instruments */
   .practice-toggle,        /* Practice */
   .midi-button,            /* MIDI learn (Web MIDI) */
-  .transport-button,       /* backing track and recording */
-  .record-button,
-  .record-time,
-  .transport-length,
-  .record-dry,
-  .record-folder,
+  .record-change,          /* takes stay in the browser; "Show" downloads them */
   .capture,
   .computer-audio,         /* the computer's own sound */
-  .open-in-daw,
-  .tracks,
-  .tracks-toggle,
-  .add-track
+  .open-in-daw
 ) {
   display: none !important;
 }

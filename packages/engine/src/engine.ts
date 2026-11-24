@@ -33,6 +33,18 @@ export interface FactoryPreset {
   order: string[];
 }
 
+/** A song's key, from the desktop's analysis::detectKey. */
+export interface KeyEstimate {
+  ok: boolean;
+  /** Tonic, 0 = C ... 11 = B; -1 when there is no clear key. */
+  key: number;
+  minor: boolean;
+  /** "A minor", "E♭ major"... */
+  name: string;
+  /** 0..1: how far the best key stands out from the next. */
+  confidence: number;
+}
+
 export interface EngineStatus {
   /** The sung note (MIDI, fractional), -1 when none. */
   note: number;
@@ -55,6 +67,9 @@ export interface Meters {
 interface Exports {
   memory: WebAssembly.Memory;
   _initialize(): void;
+  malloc(bytes: number): number;
+  free(pointer: number): void;
+  micfx_detect_key(samples: number, frames: number, sampleRate: number): number;
   micfx_text(): number;
   micfx_result(): number;
   micfx_parameter_info(engine: number): number;
@@ -229,6 +244,19 @@ export class LiveEngine {
     const at = this.x.micfx_meters(this.handle);
     const m = new Float32Array(this.x.memory.buffer, at, 3);
     return { input: m[0]!, output: m[1]!, latencySamples: m[2]! };
+  }
+
+  /** The key of a song (mono samples). Takes a moment: a few hundred ms for a song. */
+  detectKey(mono: Float32Array, sampleRate: number): KeyEstimate {
+    const at = this.x.malloc(mono.length * 4);
+    if (!at) return { ok: false, key: -1, minor: false, name: "", confidence: 0 };
+    try {
+      new Float32Array(this.x.memory.buffer, at, mono.length).set(mono);
+      const { confidencePerMille, ...key } = JSON.parse(this.readResult(this.x.micfx_detect_key(at, mono.length, sampleRate))) as Omit<KeyEstimate, "confidence"> & { confidencePerMille: number };
+      return { ...key, confidence: confidencePerMille / 1000 };
+    } finally {
+      this.x.free(at);
+    }
   }
 
   dispose(): void {

@@ -6,15 +6,17 @@
 // yet answer with empty data, so their panels stay quiet rather than break.
 import type { JuceBackend, NativeFunction, ParameterInfo } from "@micfx/bridge";
 import type { LiveEngine } from "@micfx/engine";
-import type { LiveAudio, Meters } from "./audio";
+import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
+import { Tracks } from "./tracks";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
 const METER_IDLE_MS = 250;
 const SESSION_KEY = "micfx.session";
 const SESSION_SAVE_MS = 400;
+const RECORD_DRY_PREF = "micfx.record.dry";
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -34,9 +36,19 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   let muted = false;
   let dry = false;
   let lastOrder = shadow.getOrder().join(",");
-  let lastMeters: Meters = { input: 0, output: 0, latencySamples: 0 };
+  let lastMeters: LiveMeters = { input: 0, output: 0, latencySamples: 0 };
   let status: Record<string, unknown> = {};
   let starting: Promise<unknown> | undefined;
+
+  // The sing-along tracks and the recorder. The transport is the worklet's; until the audio
+  // runs (or a stale meter after a command), the page's own copy answers.
+  const tracks = new Tracks(audio);
+  tracks.onChanged = () => backend?.emit("tracks", null);
+  tracks.onError = (message) => backend?.emit("trackError", message);
+  let transport: TransportState = { position: 0, length: 0, playing: false };
+  let recording = false;
+  let stopping: Promise<unknown> | undefined;
+  let lastTakeResult: unknown = null;
 
   // The last session (values, order, preset) comes back, as the desktop app's state does.
   const restore = () => {
@@ -96,9 +108,12 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         if (savedInput() && error instanceof DOMException && /Overconstrained|NotFound/.test(error.name)) return audio.start();
         throw error;
       })
-      .then(() => {
+      .then(async () => {
         pushToAudio();
         audio.wantStatus(true);
+        transport = { ...transport, playing: false };
+        await tracks.pushAll();
+        audio.transport("seek", transport.position);
       })
       .catch((error) => {
         console.error("MicFX: couldn't start the audio", error);
@@ -127,6 +142,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
   audio.onMeters = (meters) => {
     lastMeters = meters;
+    if (meters.transport) transport = meters.transport;
     if ("status" in meters && meters.status) status = meters.status as unknown as Record<string, unknown>;
   };
 
@@ -163,9 +179,10 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     fx: (status.fx as Record<string, unknown>) ?? {},
     midi: { count: 0, last: "", learning: "" },
     muted,
-    recording: -1,
+    // While a take starts, the worklet may not have said so yet: 0 until it does.
+    recording: recording && audio.running ? Math.max(0, lastMeters.recording ?? 0) : -1,
     capture: -1,
-    transport: { position: 0, length: 0, playing: false, loading: 0 },
+    transport: { ...transport, length: Math.max(transport.length, tracks.length), loading: tracks.loading },
   });
 
   const functions: Record<string, NativeFunction> = {
@@ -241,14 +258,69 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
     echoTapTempo: () => null,
 
+    // The sing-along tracks and the recorder (the desktop's Multitrack and Recorder).
+    getTracks: () => tracks.rows(),
+    loadBackingTrack: () => tracks.pickBackingTrack(),
+    setTrack: (id: number, options: { gain?: number; muted?: boolean } = {}) => tracks.set(Number(id), options ?? {}),
+    removeTrack: (id: number) => tracks.remove(Number(id)),
+    detectBackingKey: () => tracks.detectBackingKey(),
+
+    transport: async (action: string, seconds?: number) => {
+      if (!["play", "pause", "stop", "seek"].includes(action)) return null;
+      if (action === "play") await startAudio(); // a click: it may start the sound
+      const at = action === "stop" ? 0 : action === "seek" ? Math.max(0, Number(seconds) || 0) : transport.position;
+      transport = { ...transport, position: at, playing: action === "play" ? audio.running : action === "pause" || action === "stop" ? false : transport.playing };
+      audio.transport(action as "play" | "pause" | "stop" | "seek", at);
+      return null;
+    },
+
+    getRecorderSettings: () => ({ folder: "this browser", includeDry: readDry(), recording }),
+    chooseRecordingFolder: () => ({ folder: "this browser", includeDry: readDry(), recording }),
+    setRecordDry: (on: boolean) => {
+      try {
+        storage()?.setItem(RECORD_DRY_PREF, on ? "1" : "0");
+      } catch {
+        // not kept
+      }
+      return null;
+    },
+
+    startRecording: async (includeDry?: boolean) => {
+      await stopping;
+      await startAudio();
+      if (!audio.running) return { ok: false, error: "Start the sound first: MicFX needs your microphone to record." };
+      audio.startRecording(Boolean(includeDry));
+      recording = true;
+      transport = { ...transport, playing: true };
+      return { ok: true, error: "" };
+    },
+
+    stopRecording: () => {
+      if (!recording) return lastTakeResult;
+      recording = false;
+      transport = { ...transport, playing: false };
+      const latency = (audio.latencyMs() ?? 0) / 1000;
+      const stop = (async () => {
+        const take = await audio.stopRecording();
+        if (!take) return (lastTakeResult = null);
+        // What you sang lines up with what you heard: back by the round trip, as the desktop does.
+        const track = await tracks.addTake(take, take.start - latency);
+        lastTakeResult = { file: track.fileName, fileName: track.fileName, dryFile: track.dryFileName ?? "", seconds: take.seconds, dropped: false };
+        return lastTakeResult;
+      })();
+      stopping = stop.catch(() => {});
+      return stop;
+    },
+
+    // "Show" on the saved take: the browser downloads it.
+    revealRecording: () => tracks.downloadLastTake(),
+
     // Not on the web yet. null is what the desktop's functions answer when their part
     // isn't there (no DAW session, no song): the panels then stay empty.
     soundCheck: () => ({ phase: "idle", styles: [], style: 0 }),
     daw: () => null,
     practice: () => null,
     looper: () => null,
-    getTracks: () => [],
-    getRecorderSettings: () => null,
     liveHistory: () => null,
     liveMacros: () => null,
     scenes: () => null,
@@ -259,20 +331,11 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     computerAudio: () => null,
     liveInstruments: () => null,
     moduleFile: () => null,
-    transport: () => null,
-    startRecording: () => null,
-    stopRecording: () => null,
-    revealRecording: () => null,
-    setRecordDry: () => null,
-    chooseRecordingFolder: () => null,
-    setTrack: () => null,
-    removeTrack: () => null,
-    loadBackingTrack: () => null,
-    detectBackingKey: () => null,
     singAlongToDaw: () => null,
   };
 
   restore();
+  void tracks.restore();
 
   return {
     functions,
@@ -295,6 +358,14 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       tick();
     },
   };
+}
+
+function readDry(): boolean {
+  try {
+    return storage()?.getItem(RECORD_DRY_PREF) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function micErrorText(error: unknown): string {

@@ -1,0 +1,214 @@
+// The sing-along session on the audio thread: tracks (backing songs and recorded takes)
+// on a timeline, the transport, and the recorder. The web version of the desktop's
+// Multitrack and Recorder (src/Multitrack.cpp, src/Recorder.cpp): the tracks play under the
+// voice after its limiter, a -1 dB guard keeps the sum from clipping, and a take is the voice
+// as you hear it (and, if asked, the dry mic), without the music.
+
+export interface TrackOptions {
+  gain?: number;
+  muted?: boolean;
+}
+
+interface Track {
+  id: number;
+  /** One or two channels at the session's rate. */
+  channels: Float32Array[];
+  /** Timeline position of its first sample, in frames. */
+  start: number;
+  gain: number;
+  muted: boolean;
+}
+
+/** Recorded audio, handed over about once a second. */
+export interface TakeChunk {
+  channels: [Float32Array, Float32Array];
+  dry?: Float32Array;
+}
+
+/** Where a finished take sits and how long it is, in frames. */
+export interface TakeEnd {
+  start: number;
+  frames: number;
+}
+
+export type TransportAction = "play" | "pause" | "stop" | "seek";
+
+const CEILING = 0.89125; // -1 dB, as the desktop's applyPeakGuard
+
+export class Session {
+  /** Playhead, in frames. */
+  position = 0;
+  playing = false;
+  private tracks: Track[] = [];
+  private guardGain = 1;
+  private readonly guardRelease: number;
+  private readonly chunkFrames: number;
+
+  private recording = false;
+  private recordDry = false;
+  private recordStart = 0;
+  private recorded = 0;
+  private chunk: TakeChunk | undefined;
+  private chunkUsed = 0;
+
+  constructor(
+    readonly sampleRate: number,
+    private readonly onChunk: (chunk: TakeChunk) => void,
+  ) {
+    this.guardRelease = 1 - Math.exp(-1 / (0.1 * sampleRate)); // ~100 ms
+    this.chunkFrames = Math.round(sampleRate);
+  }
+
+  /** The end of the last track, in frames. */
+  get length(): number {
+    let end = 0;
+    for (const track of this.tracks) end = Math.max(end, track.start + (track.channels[0]?.length ?? 0));
+    return end;
+  }
+
+  get trackCount(): number {
+    return this.tracks.length;
+  }
+
+  /** Seconds recorded, or -1 when not recording. */
+  get recordingSeconds(): number {
+    return this.recording ? this.recorded / this.sampleRate : -1;
+  }
+
+  addTrack(id: number, channels: Float32Array[], start: number, options: TrackOptions = {}): void {
+    this.removeTrack(id);
+    if (channels.length === 0) return;
+    this.tracks.push({ id, channels, start: Math.max(0, Math.round(start)), gain: options.gain ?? 1, muted: options.muted ?? false });
+  }
+
+  removeTrack(id: number): void {
+    this.tracks = this.tracks.filter((track) => track.id !== id);
+  }
+
+  setTrack(id: number, options: TrackOptions): void {
+    const track = this.tracks.find((t) => t.id === id);
+    if (!track) return;
+    if (options.gain !== undefined && Number.isFinite(options.gain)) track.gain = Math.max(0, Math.min(4, options.gain));
+    if (options.muted !== undefined) track.muted = options.muted;
+  }
+
+  transport(action: TransportAction, seconds?: number): void {
+    switch (action) {
+      case "play":
+        this.playing = true;
+        break;
+      case "pause":
+        this.playing = false;
+        break;
+      case "stop":
+        this.playing = false;
+        this.position = 0;
+        break;
+      case "seek":
+        this.position = Math.max(0, Math.round((seconds ?? 0) * this.sampleRate));
+        break;
+    }
+  }
+
+  /** Starts a take where the playhead is, and plays (as the desktop's Record). */
+  startRecording(includeDry: boolean): void {
+    if (this.recording) this.stopRecording();
+    this.recording = true;
+    this.recordDry = includeDry;
+    this.recordStart = this.position;
+    this.recorded = 0;
+    this.playing = true;
+  }
+
+  /** Ends the take: the last chunk goes out, then where it belongs. Pauses, as the desktop does. */
+  stopRecording(): TakeEnd | undefined {
+    if (!this.recording) return undefined;
+    this.flush();
+    this.recording = false;
+    this.playing = false;
+    return { start: this.recordStart, frames: this.recorded };
+  }
+
+  /**
+   * After the engine, with the voice in left/right and the mic that went in. Records the
+   * voice, then adds the tracks under it while playing.
+   */
+  process(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number): void {
+    if (this.recording) this.record(left, right, mic, frames);
+    if (!this.playing) return;
+
+    const blockStart = this.position;
+    const blockEnd = blockStart + frames;
+    let mixed = false;
+    for (const track of this.tracks) {
+      if (track.muted || track.gain === 0) continue;
+      const length = track.channels[0]!.length;
+      const from = Math.max(blockStart, track.start);
+      const to = Math.min(blockEnd, track.start + length);
+      if (from >= to) continue;
+      const l = track.channels[0]!;
+      const r = track.channels[1] ?? l;
+      const gain = track.gain;
+      for (let t = from; t < to; ++t) {
+        const i = t - blockStart;
+        const s = t - track.start;
+        left[i]! += l[s]! * gain;
+        right[i]! += r[s]! * gain;
+      }
+      mixed = true;
+    }
+    if (mixed || this.guardGain < 1) this.guard(left, right, frames);
+    this.position = blockEnd;
+  }
+
+  private guard(left: Float32Array, right: Float32Array, frames: number) {
+    let gain = this.guardGain;
+    for (let i = 0; i < frames; ++i) {
+      const peak = Math.max(Math.abs(left[i]!), Math.abs(right[i]!));
+      if (peak * gain > CEILING) gain = CEILING / peak; // instant attack: never overshoots
+      else gain += (1 - gain) * this.guardRelease;
+      if (gain < 0.9999) {
+        left[i]! *= gain;
+        right[i]! *= gain;
+      }
+    }
+    this.guardGain = gain > 0.9999 ? 1 : gain;
+  }
+
+  private record(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number) {
+    let done = 0;
+    while (done < frames) {
+      if (!this.chunk) {
+        this.chunk = {
+          channels: [new Float32Array(this.chunkFrames), new Float32Array(this.chunkFrames)],
+          dry: this.recordDry ? new Float32Array(this.chunkFrames) : undefined,
+        };
+        this.chunkUsed = 0;
+      }
+      const count = Math.min(frames - done, this.chunkFrames - this.chunkUsed);
+      this.chunk.channels[0].set(left.subarray(done, done + count), this.chunkUsed);
+      this.chunk.channels[1].set(right.subarray(done, done + count), this.chunkUsed);
+      this.chunk.dry?.set(mic.subarray(done, done + count), this.chunkUsed);
+      this.chunkUsed += count;
+      done += count;
+      if (this.chunkUsed === this.chunkFrames) this.flush();
+    }
+    this.recorded += frames;
+  }
+
+  private flush() {
+    const chunk = this.chunk;
+    if (!chunk || this.chunkUsed === 0) return;
+    const used = this.chunkUsed;
+    this.chunk = undefined;
+    this.chunkUsed = 0;
+    this.onChunk(
+      used === this.chunkFrames
+        ? chunk
+        : {
+            channels: [chunk.channels[0].slice(0, used), chunk.channels[1].slice(0, used)],
+            dry: chunk.dry?.slice(0, used),
+          },
+    );
+  }
+}

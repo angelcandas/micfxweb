@@ -1,10 +1,24 @@
 // The audio side of MicFX Voice: the mic, the AudioContext and the engine's worklet.
 import wasmUrl from "@micfx/engine/engine.wasm?url";
 import workletUrl from "@micfx/engine/worklet?worker&url";
-import type { FromWorklet, ToWorklet, Values } from "@micfx/engine/messages";
+import type { FromWorklet, ToWorklet, TransportState, Values } from "@micfx/engine/messages";
+import type { TrackOptions, TransportAction } from "@micfx/engine/session";
 import { instantiateEngineModule, type FactoryPreset, type Meters, type ParameterInfo, type ValueInfo } from "@micfx/engine";
 
-export type { Meters };
+export type { Meters, TransportState };
+
+/** A finished take from the worklet: the voice (stereo) and, if asked, the dry mic. */
+export interface RecordedTake {
+  /** Timeline position of its first sample, in seconds (before latency correction). */
+  start: number;
+  seconds: number;
+  sampleRate: number;
+  channels: [Float32Array, Float32Array];
+  dry?: Float32Array;
+}
+
+/** The meters with the transport and the recorder, as the worklet sends them. */
+export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown };
 
 export interface LiveAudioInfo {
   values: ValueInfo[];
@@ -16,7 +30,7 @@ export interface LiveAudioInfo {
 
 let compiled: Promise<WebAssembly.Module> | undefined;
 
-function compileEngine(): Promise<WebAssembly.Module> {
+export function compileEngine(): Promise<WebAssembly.Module> {
   compiled ??= (async () => {
     const response = await fetch(wasmUrl);
     if (!response.ok) throw new Error(`Couldn't load the audio engine (${response.status})`);
@@ -48,7 +62,7 @@ export async function createShadowEngine() {
 
 /** Mic -> MicFX engine -> speakers/headphones. */
 export class LiveAudio {
-  onMeters: (meters: Meters) => void = () => {};
+  onMeters: (meters: LiveMeters) => void = () => {};
   /** Every parameter's value after a preset load. */
   onValues: (values: Values, order: string[]) => void = () => {};
   private context: AudioContext | undefined;
@@ -56,6 +70,8 @@ export class LiveAudio {
   private stream: MediaStream | undefined;
   private latencySamples = 0;
   private outputId = "";
+  private takeChunks: { channels: [Float32Array, Float32Array]; dry?: Float32Array }[] = [];
+  private takeDone: ((take: RecordedTake | undefined) => void) | undefined;
 
   get running(): boolean {
     return this.context?.state === "running";
@@ -101,7 +117,8 @@ export class LiveAudio {
         else if (message.type === "meters") {
           this.latencySamples = message.latencySamples;
           this.onMeters(message);
-        }
+        } else if (message.type === "takeChunk") this.takeChunks.push({ channels: message.channels, dry: message.dry });
+        else if (message.type === "takeEnd") this.finishTake(message.start, message.frames);
       };
     });
 
@@ -120,6 +137,7 @@ export class LiveAudio {
   }
 
   async stop(): Promise<void> {
+    this.finishTake(undefined, undefined);
     this.stream?.getTracks().forEach((track) => track.stop());
     this.node?.disconnect();
     await this.context?.close().catch(() => {});
@@ -172,6 +190,68 @@ export class LiveAudio {
   /** A desktop factory preset by index; onValues follows. */
   loadPreset(index: number): void {
     this.post({ type: "loadPreset", index });
+  }
+
+  /** A track on the timeline (channels at this context's rate); replaces one with the same id. */
+  addTrack(id: number, channels: Float32Array[], startSeconds: number, options?: TrackOptions): void {
+    const rate = this.sampleRate;
+    if (rate) this.post({ type: "addTrack", id, channels, start: Math.round(startSeconds * rate), options });
+  }
+
+  removeTrack(id: number): void {
+    this.post({ type: "removeTrack", id });
+  }
+
+  setTrack(id: number, options: TrackOptions): void {
+    this.post({ type: "setTrack", id, options });
+  }
+
+  transport(action: TransportAction, seconds?: number): void {
+    this.post({ type: "transport", action, seconds });
+  }
+
+  /** Starts a take where the playhead is (and plays). */
+  startRecording(includeDry: boolean): void {
+    this.takeChunks = [];
+    this.post({ type: "record", on: true, dry: includeDry });
+  }
+
+  /** Ends the take; undefined when nothing was recording. */
+  stopRecording(): Promise<RecordedTake | undefined> {
+    if (!this.node) return Promise.resolve(undefined);
+    if (this.takeDone) this.finishTake(undefined, undefined); // a stop still waiting
+    const done = new Promise<RecordedTake | undefined>((resolve) => (this.takeDone = resolve));
+    this.post({ type: "record", on: false });
+    return done;
+  }
+
+  private finishTake(start: number | undefined, frames: number | undefined) {
+    const done = this.takeDone;
+    if (!done) return;
+    const chunks = this.takeChunks;
+    const rate = this.sampleRate;
+    this.takeDone = undefined;
+    this.takeChunks = [];
+    if (start === undefined || !frames || !rate) return done(undefined);
+
+    const join = (parts: Float32Array[]) => {
+      const out = new Float32Array(frames);
+      let at = 0;
+      for (const part of parts) {
+        out.set(part.subarray(0, Math.min(part.length, frames - at)), at);
+        at += part.length;
+        if (at >= frames) break;
+      }
+      return out;
+    };
+    const dryParts = chunks.map((c) => c.dry).filter((d): d is Float32Array => d !== undefined);
+    done({
+      start: start / rate,
+      seconds: frames / rate,
+      sampleRate: rate,
+      channels: [join(chunks.map((c) => c.channels[0])), join(chunks.map((c) => c.channels[1]))],
+      dry: dryParts.length ? join(dryParts) : undefined,
+    });
   }
 
   private post(message: ToWorklet) {
