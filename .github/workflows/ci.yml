@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   web:
-    name: Type-check and build
+    name: Engine, type-check, build, tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -24,7 +24,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 7.0.1
+          actions-cache-folder: emsdk-cache
       - run: pnpm install --frozen-lockfile
+      - name: Build the engine (desktop DSP to wasm)
+        run: pnpm --filter @micfx/engine build
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test

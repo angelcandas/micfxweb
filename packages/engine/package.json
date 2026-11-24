@@ -1,0 +1,20 @@
+{
+  "name": "@micfx/engine",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/engine.ts",
+    "./engine.wasm": "./dist/engine.wasm"
+  },
+  "scripts": {
+    "build": "bash build.sh",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3",
+    "vitest": "4.0.15"
+  }
+}
