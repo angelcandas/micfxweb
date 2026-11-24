@@ -25,7 +25,12 @@ interface Track {
 export interface TakeChunk {
   channels: [Float32Array, Float32Array];
   dry?: Float32Array;
+  /** The live input (a browser tab) as it played, when it was on as the take started. */
+  backing?: [Float32Array, Float32Array];
 }
+
+/** A live input's two channels for one block (the same array twice for mono). */
+export type LiveBlock = [Float32Array, Float32Array];
 
 /** Where a finished take sits and how long it is, in frames. */
 export interface TakeEnd {
@@ -54,6 +59,10 @@ export class Session {
   /** Frames left of a count-in before the take starts (and the transport with it). */
   private countIn = 0;
   private recordDry = false;
+  private recordBacking = false;
+  /** A live input (a browser tab) plays under the voice while on. */
+  liveOn = false;
+  liveGain = 1;
   private recordStart = 0;
   private recorded = 0;
   private chunk: TakeChunk | undefined;
@@ -142,6 +151,7 @@ export class Session {
     if (this.recording) this.stopRecording();
     this.recording = true;
     this.recordDry = includeDry;
+    this.recordBacking = this.liveOn;
     this.recordStart = this.position;
     this.recorded = 0;
     this.metronome.anchor = this.position;
@@ -163,26 +173,30 @@ export class Session {
    * After the engine, with the voice in left/right and the mic that went in. Records the
    * voice, then adds the tracks under it while playing.
    */
-  process(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number): void {
+  process(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number, live?: LiveBlock): void {
     // A count-in: clicks, then the take and the transport start mid-block.
     if (this.countIn > 0) {
       const count = Math.min(frames, this.countIn);
+      if (this.addLive(left, right, live, 0, count)) this.guard(left, right, count);
       this.metronome.process(left, right, 0, count, -this.countIn, true);
       this.countIn -= count;
       if (this.countIn > 0) return;
       this.playing = true;
-      if (count < frames) this.process(left.subarray(count), right === left ? left.subarray(count) : right.subarray(count), mic.subarray(count), frames - count);
+      const rest = (a: Float32Array) => a.subarray(count);
+      if (count < frames)
+        this.process(rest(left), right === left ? rest(left) : rest(right), rest(mic), frames - count, live && [rest(live[0]), live[1] === live[0] ? rest(live[0]) : rest(live[1])]);
       return;
     }
-    if (this.recording) this.record(left, right, mic, frames);
+    if (this.recording) this.record(left, right, mic, frames, live);
     if (!this.playing) {
+      if (this.addLive(left, right, live, 0, frames) || this.guardGain < 1) this.guard(left, right, frames);
       this.metronome.process(left, right, 0, frames, undefined);
       return;
     }
     const clickFrom = this.position;
 
     // A loop: the block is played in parts, going back to its start at its end.
-    let mixed = false;
+    let mixed = this.addLive(left, right, live, 0, frames);
     let done = 0;
     while (done < frames) {
       const loop = this.loop;
@@ -196,6 +210,19 @@ export class Session {
     if (mixed || this.guardGain < 1) this.guard(left, right, frames);
     // The click after the guard, on the transport's grid (loops jump it, as they should).
     if (this.metronome.on) this.click(left, right, clickFrom, frames);
+  }
+
+  /** The live input under the voice; true when it played. */
+  private addLive(left: Float32Array, right: Float32Array, live: LiveBlock | undefined, offset: number, frames: number): boolean {
+    if (!live || !this.liveOn || this.liveGain === 0) return false;
+    const gain = this.liveGain;
+    const [l, r] = live;
+    const n = Math.min(frames, l.length - offset);
+    for (let i = 0; i < n; ++i) {
+      left[i]! += l[offset + i]! * gain;
+      right[i]! += r[offset + i]! * gain;
+    }
+    return n > 0;
   }
 
   private click(left: Float32Array, right: Float32Array, from: number, frames: number) {
@@ -250,13 +277,14 @@ export class Session {
     this.guardGain = gain > 0.9999 ? 1 : gain;
   }
 
-  private record(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number) {
+  private record(left: Float32Array, right: Float32Array, mic: Float32Array, frames: number, live?: LiveBlock) {
     let done = 0;
     while (done < frames) {
       if (!this.chunk) {
         this.chunk = {
           channels: [new Float32Array(this.chunkFrames), new Float32Array(this.chunkFrames)],
           dry: this.recordDry ? new Float32Array(this.chunkFrames) : undefined,
+          backing: this.recordBacking ? [new Float32Array(this.chunkFrames), new Float32Array(this.chunkFrames)] : undefined,
         };
         this.chunkUsed = 0;
       }
@@ -264,6 +292,11 @@ export class Session {
       this.chunk.channels[0].set(left.subarray(done, done + count), this.chunkUsed);
       this.chunk.channels[1].set(right.subarray(done, done + count), this.chunkUsed);
       this.chunk.dry?.set(mic.subarray(done, done + count), this.chunkUsed);
+      // The tab as it came in (before its level): silence where it stopped.
+      if (this.chunk.backing && live && this.liveOn) {
+        this.chunk.backing[0].set(live[0].subarray(done, done + count), this.chunkUsed);
+        this.chunk.backing[1].set(live[1].subarray(done, done + count), this.chunkUsed);
+      }
       this.chunkUsed += count;
       done += count;
       if (this.chunkUsed === this.chunkFrames) this.flush();
@@ -283,6 +316,7 @@ export class Session {
         : {
             channels: [chunk.channels[0].slice(0, used), chunk.channels[1].slice(0, used)],
             dry: chunk.dry?.slice(0, used),
+            backing: chunk.backing && [chunk.backing[0].slice(0, used), chunk.backing[1].slice(0, used)],
           },
     );
   }

@@ -18,6 +18,7 @@ import { Practice, opfsStore } from "./practice";
 import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
+import { TabAudio, gainOf, mixBacking } from "./tab-audio";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -64,6 +65,11 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   let recording = false;
   let stopping: Promise<unknown> | undefined;
   let lastTakeResult: unknown = null;
+
+  // A browser tab's sound under the voice (plan section 9, point 9), on the desktop's
+  // "Computer audio" panel.
+  const tabAudio = new TabAudio(audio, () => startAudio());
+  tabAudio.onEnded = () => backend?.emit("trackError", "The tab stopped sharing its sound.");
 
   // The looper plays in the worklet's engine. Its tempo, lock and volume are app
   // preferences, like on the desktop; the shadow engine answers while the sound is off.
@@ -475,6 +481,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     // While a take starts, the worklet may not have said so yet: 0 until it does.
     recording: recording && audio.running ? Math.max(0, lastMeters.recording ?? 0) : -1,
     capture: -1,
+    computer: tabAudio.reading(),
     transport: { ...transport, length: Math.max(transport.length, tracks.length), loading: tracks.loading },
     scenes: scenes.describe(),
     looper: looperState,
@@ -601,6 +608,9 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       const stop = (async () => {
         const take = await audio.stopRecording();
         if (!take) return (lastTakeResult = null);
+        // The tab under the voice, as you heard them together.
+        if (take.backing && tabAudio.inRecordings)
+          take.channels = mixBacking(take.channels, take.backing, gainOf(tabAudio.state().level), latency * take.sampleRate);
         // What you sang lines up with what you heard: back by the round trip, as the desktop does.
         const track = await tracks.addTake(take, take.start - latency);
         lastTakeResult = { file: track.fileName, fileName: track.fileName, dryFile: track.dryFileName ?? "", seconds: take.seconds, dropped: false };
@@ -609,6 +619,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       stopping = stop.catch(() => {});
       return stop;
     },
+
+    computerAudio: (action = "status", changes: Record<string, unknown> = {}) => (action === "set" ? tabAudio.set(changes ?? {}) : tabAudio.state()),
 
     // "Show" on the saved take: the browser downloads it.
     revealRecording: () => tracks.downloadLastTake(),
@@ -681,7 +693,6 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       return describeMidi();
     },
     capture: () => null,
-    computerAudio: () => null,
     liveInstruments: () => null,
     moduleFile: () => null,
     singAlongToDaw: () => null,
@@ -709,6 +720,10 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       metronome: () => ({ ...metronomePrefs, bpm: looperState.bpm, beatsPerBar: looperState.beatsPerBar, countingIn: lastMeters.countIn ?? 0 }),
       setMetronome,
       setTempo: (bpm: number) => setLooper({ bpm: Math.max(30, Math.min(300, bpm)) }),
+      /** Starts the sound (a click): the mic, the engine. */
+      startAudio: () => startAudio(),
+      /** What you hear as a stream (for a video), once the sound runs. */
+      outputStream: () => audio.outputStream(),
       /** Playing or recording: not a moment to restart. */
       busy: () => transport.playing || recording,
       /** Saves the session now, if a change is waiting (before a backup). */

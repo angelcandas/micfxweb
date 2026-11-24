@@ -34,6 +34,11 @@ export type ToWorklet =
   | { type: "looperSettings"; bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }
   /** Every layer's audio: "looperLayers" follows. */
   | { type: "looperExport" }
+  /**
+   * A live sound on the node's second input (a browser tab): mixed under the voice at `gain`
+   * while on, and kept beside each take as its "backing".
+   */
+  | { type: "liveInput"; on: boolean; gain?: number }
   /** The raw mic, for a sound check: "micChunk"s of about 0.1 s while on. */
   | { type: "captureMic"; on: boolean }
   /** The Practice view's pitch tap: meters carry "pitch" readings while on. */
