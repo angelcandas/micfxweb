@@ -240,3 +240,40 @@ describe("LiveEngine (desktop DSP in wasm)", () => {
     engine.dispose();
   });
 });
+
+describe("key detection", () => {
+  // Chords of A minor (Am, Dm, E, Am), 2 s each, as sine triads.
+  function song(): Float32Array {
+    const chords = [[57, 60, 64], [62, 65, 69], [64, 68, 71], [57, 60, 64]];
+    const out = new Float32Array(RATE * 2 * chords.length * 2);
+    for (let i = 0; i < out.length; ++i) {
+      const chord = chords[Math.floor(i / (RATE * 2)) % chords.length]!;
+      let s = 0;
+      for (const note of chord) {
+        const f = 440 * 2 ** ((note - 69) / 12);
+        s += Math.sin((2 * Math.PI * f * i) / RATE) + 0.5 * Math.sin((4 * Math.PI * f * i) / RATE);
+      }
+      out[i] = 0.1 * s;
+    }
+    return out;
+  }
+
+  it("finds A minor", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const started = performance.now();
+    const key = engine.detectKey(song(), RATE);
+    const ms = performance.now() - started;
+    engine.dispose();
+    expect(key.ok).toBe(true);
+    expect([key.key, key.minor]).toEqual([9, true]);
+    expect(key.name).toMatch(/^A/);
+    console.log(`key: ${key.name} (${key.confidence.toFixed(2)}) in ${ms.toFixed(0)} ms for 16 s`);
+  });
+
+  it("says when there is no key", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const key = engine.detectKey(new Float32Array(RATE), RATE);
+    engine.dispose();
+    expect(key.ok).toBe(false);
+  });
+});

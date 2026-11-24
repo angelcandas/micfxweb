@@ -5,6 +5,7 @@
 // Audio crosses through the engine's own buffers (micfx_input / micfx_output).
 #include "LiveEngine.h"
 #include "WebParameters.h"
+#include "analysis/Key.h"
 
 #include <string>
 
@@ -200,4 +201,22 @@ MICFX_EXPORT float* micfx_meters (Instance* instance)
     instance->meters[1] = peaks.output;
     instance->meters[2] = (float) instance->engine.getLatencySamples();
     return instance->meters;
+}
+
+// The key of a song (the desktop's analysis::detectKey), from `frames` mono samples at
+// `samples` (the caller's malloc). JSON: { ok, key, minor, name, confidencePerMille }.
+MICFX_EXPORT int micfx_detect_key (float* samples, int frames, double sampleRate)
+{
+    float* channels[] = { samples };
+    const juce::AudioBuffer<float> audio (channels, 1, frames);
+    const auto key = analysis::detectKey (audio, sampleRate);
+
+    // Written by hand: JUCE's double-to-text goes through std::ostream, which the standalone
+    // build has no locale for.
+    const auto name = key.isValid() ? key.getName() : juce::String();
+    return writeResult ("{\"ok\":" + juce::String (key.isValid() ? "true" : "false")
+                        + ",\"key\":" + juce::String (key.key)
+                        + ",\"minor\":" + juce::String (key.minor ? "true" : "false")
+                        + ",\"name\":" + juce::JSON::toString (name)
+                        + ",\"confidencePerMille\":" + juce::String (juce::roundToInt (key.confidence * 1000.0f)) + "}");
 }
