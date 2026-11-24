@@ -26,8 +26,8 @@ test("the desktop Live UI runs on the web bridge", async ({ page }) => {
 
   // The first-run card's "I'm wearing headphones" starts the mic (the click browsers need).
   await page.getByRole("button", { name: "I'm wearing headphones" }).click();
-  await expect(page.locator(".audio-status").first()).toContainText("round trip");
-  await expect(page.locator(".audio-status").first()).not.toContainText("input muted");
+  await expect(page.locator(".audio-status:visible")).toContainText("round trip");
+  await expect(page.locator(".audio-status:visible")).not.toContainText("input muted");
   await page.getByRole("button", { name: "Done" }).click();
 
   await expect.poll(async () => (await meters(page)).output).toBeGreaterThan(-40);
@@ -53,4 +53,57 @@ test("parts the browser can't do yet are hidden", async ({ page }) => {
   await expect(page.locator(".effect-item").first()).toBeVisible();
   for (const selector of [".mode-switch", ".practice-toggle", ".midi-button", ".record-button", ".computer-audio"])
     await expect(page.locator(selector).first()).toBeHidden();
+});
+
+test("the session comes back after a reload", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".preset-button").click();
+  await page.locator(".preset-load", { hasText: /^Demon$/ }).click();
+  const denoise = page.locator('.effect-item[data-learn="param:denoiseOn"]');
+  await denoise.click();
+  await expect(denoise).toHaveAttribute("aria-pressed", "true");
+  await page.waitForTimeout(600); // saved after a short pause
+
+  await page.reload();
+  await expect(page.locator(".preset-name")).toHaveText("Demon");
+  await expect(page.locator('.effect-item[data-learn="param:denoiseOn"]')).toHaveAttribute("aria-pressed", "true");
+});
+
+test("audio settings pick the mic and start or stop the sound", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".audio-status:visible").click();
+  const dialog = page.getByRole("dialog", { name: "Audio settings" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Microphone")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Stop sound" })).toBeVisible(); // the click started it
+  await expect(page.locator(".audio-status:visible")).not.toContainText("input muted");
+  await dialog.getByRole("button", { name: "Stop sound" }).click();
+  await expect(dialog.getByRole("button", { name: "Start sound" })).toBeVisible();
+  await expect(page.locator(".audio-status:visible")).toContainText("input muted");
+});
+
+test("your own sounds are saved in the browser and play again", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".preset-button").click();
+  await page.locator(".preset-load", { hasText: /^Robot$/ }).click();
+
+  // Save the sound from the preset menu's save row.
+  await page.locator(".preset-button").click();
+  const save = page.locator(".preset-menu").getByRole("button", { name: /Save/ }).first();
+  await save.click();
+  const input = page.locator(".preset-menu input[type=text], .preset-menu input:not([type])").last();
+  await input.fill("My robot");
+  await input.press("Enter");
+  await expect.poll(() => page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("micfx.library") ?? "{}").sounds ?? {}))).toContain("My robot");
+
+  // Another preset, then the saved sound again.
+  await page.locator(".preset-button").click();
+  await page.locator(".preset-load", { hasText: /^Natural$/ }).click();
+  await expect(page.locator('.effect-item[data-learn="param:robotOn"]')).toHaveAttribute("aria-pressed", "false");
+  await page.locator(".preset-button").click();
+  await page.locator(".preset-menu").getByText("My robot", { exact: true }).click();
+  await expect(page.locator('.effect-item[data-learn="param:robotOn"]')).toHaveAttribute("aria-pressed", "true");
 });
