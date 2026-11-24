@@ -15,6 +15,9 @@ LiveEngine::LiveEngine (double sampleRate, int maxBlockSize)
     limiter.setRelease (100.0f);
 
     buffer.setSize (2, maxBlockSize);
+    loopInput.setSize (2, maxBlockSize);
+    looper.prepare (sampleRate);
+    guardRelease = 1.0f - std::exp (-1.0f / (0.1f * (float) sampleRate)); // ~100 ms, as the desktop's
 
     for (int m = 0; m < chain.size(); ++m)
     {
@@ -53,7 +56,21 @@ void LiveEngine::process (const float* input, float* left, float* right, int num
         chain.process (context);
 
     outputGain.process (context);
+
+    // The looper hears the voice before the limiter; its layers are added after it.
+    const auto looping = looper.getState() != Looper::State::empty || looper.hasPendingCommands();
+    if (looping)
+        for (int ch = 0; ch < 2; ++ch)
+            loopInput.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
     limiter.process (context);
+
+    if (looping)
+    {
+        juce::AudioBuffer<float> output (buffer.getArrayOfWritePointers(), 2, 0, numSamples);
+        looper.process (loopInput, output, 2, numSamples);
+        applyPeakGuard (numSamples);
+    }
 
     if (muted)
         buffer.clear (0, numSamples);
@@ -62,6 +79,27 @@ void LiveEngine::process (const float* input, float* left, float* right, int num
 
     std::copy_n (buffer.getReadPointer (0), numSamples, left);
     std::copy_n (buffer.getReadPointer (1), numSamples, right);
+}
+
+// The desktop's PluginProcessor::applyPeakGuard: an instant-attack -1 dB gain.
+void LiveEngine::applyPeakGuard (int numSamples) noexcept
+{
+    constexpr auto ceiling = 0.89125f;
+    auto* l = buffer.getWritePointer (0);
+    auto* r = buffer.getWritePointer (1);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto peak = juce::jmax (std::abs (l[i]), std::abs (r[i]));
+        if (peak * guardGain > ceiling)
+            guardGain = ceiling / peak;
+        else
+            guardGain += (1.0f - guardGain) * guardRelease;
+        if (guardGain < 0.9999f)
+        {
+            l[i] *= guardGain;
+            r[i] *= guardGain;
+        }
+    }
 }
 
 bool LiveEngine::setValue (const juce::String& id, float value) noexcept

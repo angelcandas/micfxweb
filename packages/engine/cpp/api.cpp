@@ -98,6 +98,7 @@ struct Instance
     fx::SpectrumAnalyser spectrumAnalyser;
     std::vector<float> input, left, right;
     float meters[3] {};
+    juce::AudioBuffer<float> exported; // a looper layer, for saving
 };
 
 juce::String readText (int length)
@@ -219,4 +220,103 @@ MICFX_EXPORT int micfx_detect_key (float* samples, int frames, double sampleRate
                         + ",\"minor\":" + juce::String (key.minor ? "true" : "false")
                         + ",\"name\":" + juce::JSON::toString (name)
                         + ",\"confidencePerMille\":" + juce::String (juce::roundToInt (key.confidence * 1000.0f)) + "}");
+}
+
+//==============================================================================
+// The looper (the desktop's "looper" native function, src/PluginEditor.cpp).
+
+namespace
+{
+// A number for JSON with `decimals` places, without std::ostream (see micfx_detect_key).
+juce::String fixed (double value, int decimals = 3)
+{
+    const auto scale = std::pow (10.0, decimals);
+    auto scaled = (juce::int64) std::llround (std::abs (value) * scale);
+    const auto whole = scaled / (juce::int64) scale;
+    auto fraction = juce::String (scaled % (juce::int64) scale).paddedLeft ('0', decimals);
+    return (value < 0 && scaled != 0 ? "-" : "") + juce::String (whole) + (decimals > 0 ? "." + fraction : juce::String());
+}
+}
+
+// 0 main (record / overdub / end the overdub / play), 1 stop, 2 play, 3 undo, 4 redo, 5 clear.
+MICFX_EXPORT int micfx_looper_command (Instance* instance, int command)
+{
+    if (command < 0 || command > 5)
+        return 0;
+    return instance->engine.getLooper().send ((Looper::Command) command) ? 1 : 0;
+}
+
+// A layer's gain and mute; a negative value leaves it as it is.
+MICFX_EXPORT void micfx_looper_layer (Instance* instance, int layer, float gain, int muted)
+{
+    auto& looper = instance->engine.getLooper();
+    if (gain >= 0.0f) looper.setLayerGain (layer, gain);
+    if (muted >= 0)   looper.setLayerMuted (layer, muted != 0);
+}
+
+// Tempo and volume; a negative value leaves it as it is.
+MICFX_EXPORT void micfx_looper_settings (Instance* instance, double bpm, int beatsPerBar, int locked, float volume)
+{
+    auto& looper = instance->engine.getLooper();
+    looper.setTempo (bpm > 0 ? bpm : looper.getBpm(), beatsPerBar > 0 ? beatsPerBar : looper.getBeatsPerBar());
+    if (locked >= 0)     looper.setTempoLocked (locked != 0);
+    if (volume >= 0.0f)  looper.setVolume (juce::jlimit (0.0f, 2.0f, volume));
+}
+
+// The desktop's describeLooper as JSON, with the layers' 96-bin overviews when asked.
+MICFX_EXPORT int micfx_looper_state (Instance* instance, int withOverview)
+{
+    const auto& looper = instance->engine.getLooper();
+    const auto rate = looper.getSampleRate();
+    const auto layers = looper.getNumLayers();
+
+    juce::String json;
+    json << "{\"state\":\"" << Looper::getStateName (looper.getState()) << "\""
+         << ",\"layers\":" << layers
+         << ",\"redo\":" << looper.getNumRedoLayers()
+         << ",\"maxLayers\":" << Looper::maxLayers
+         << ",\"length\":" << fixed ((double) looper.getLength() / rate)
+         << ",\"position\":" << fixed ((double) looper.getPosition() / rate)
+         << ",\"closing\":" << fixed ((double) looper.getClosingTarget() / rate)
+         << ",\"maxSeconds\":" << fixed (Looper::maxSeconds, 0)
+         << ",\"bpm\":" << fixed (looper.getBpm(), 2)
+         << ",\"beatsPerBar\":" << looper.getBeatsPerBar()
+         << ",\"locked\":" << (looper.isTempoLocked() ? "true" : "false")
+         << ",\"volume\":" << fixed (looper.getVolume());
+
+    juce::StringArray gains, mutes;
+    for (int i = 0; i < Looper::maxLayers; ++i)
+    {
+        gains.add (fixed (looper.getLayerGain (i)));
+        mutes.add (looper.isLayerMuted (i) ? "true" : "false");
+    }
+    json << ",\"gains\":[" << gains.joinIntoString (",") << "],\"mutes\":[" << mutes.joinIntoString (",") << "]";
+
+    if (withOverview != 0)
+    {
+        juce::StringArray overviews;
+        for (int i = 0; i < layers; ++i)
+        {
+            juce::StringArray peaks;
+            for (auto peak : looper.getOverview (i, 96))
+                peaks.add (fixed (peak));
+            overviews.add ("[" + peaks.joinIntoString (",") + "]");
+        }
+        json << ",\"overviews\":[" << overviews.joinIntoString (",") << "]";
+    }
+    return writeResult (json + "}");
+}
+
+// Copies one pass of a looper layer; returns its length in frames (0: no such layer).
+// The audio is then at micfx_looper_copied (channel 0 and 1) until the next copy.
+MICFX_EXPORT int micfx_looper_copy (Instance* instance, int layer)
+{
+    if (! instance->engine.getLooper().copyLayer (layer, instance->exported))
+        return 0;
+    return instance->exported.getNumSamples();
+}
+
+MICFX_EXPORT const float* micfx_looper_copied (Instance* instance, int channel)
+{
+    return instance->exported.getReadPointer (juce::jlimit (0, juce::jmax (0, instance->exported.getNumChannels() - 1), channel));
 }

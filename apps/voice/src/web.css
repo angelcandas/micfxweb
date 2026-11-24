@@ -3,9 +3,10 @@
 body[data-platform="web"] :is(
   .mode-switch,            /* DAW mode: the MicFX DAW app */
   .live-tracks,
-  .loop-toggle,            /* looper and instruments */
+  .inst-toggle-chip,       /* the Live instruments (Web MIDI synths) */
+  .loop-send,              /* the looper's "Send to DAW": MicFX DAW */
+  .loop-repeats,
   .practice-toggle,        /* Practice */
-  .midi-button,            /* MIDI learn (Web MIDI) */
   .record-change,          /* takes stay in the browser; "Show" downloads them */
   .capture,
   .computer-audio,         /* the computer's own sound */

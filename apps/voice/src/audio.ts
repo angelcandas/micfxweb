@@ -3,6 +3,7 @@ import wasmUrl from "@micfx/engine/engine.wasm?url";
 import workletUrl from "@micfx/engine/worklet?worker&url";
 import type { FromWorklet, ToWorklet, TransportState, Values } from "@micfx/engine/messages";
 import type { TrackOptions, TransportAction } from "@micfx/engine/session";
+import type { LooperCommand, LooperState } from "@micfx/engine";
 import { instantiateEngineModule, type FactoryPreset, type Meters, type ParameterInfo, type ValueInfo } from "@micfx/engine";
 
 export type { Meters, TransportState };
@@ -18,7 +19,7 @@ export interface RecordedTake {
 }
 
 /** The meters with the transport and the recorder, as the worklet sends them. */
-export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown };
+export type LiveMeters = Meters & { transport?: TransportState; recording?: number; status?: unknown; looper?: LooperState };
 
 export interface LiveAudioInfo {
   values: ValueInfo[];
@@ -72,6 +73,7 @@ export class LiveAudio {
   private outputId = "";
   private takeChunks: { channels: [Float32Array, Float32Array]; dry?: Float32Array }[] = [];
   private takeDone: ((take: RecordedTake | undefined) => void) | undefined;
+  private layersDone: ((layers: { layers: [Float32Array, Float32Array][]; sampleRate: number }) => void) | undefined;
 
   get running(): boolean {
     return this.context?.state === "running";
@@ -119,6 +121,10 @@ export class LiveAudio {
           this.onMeters(message);
         } else if (message.type === "takeChunk") this.takeChunks.push({ channels: message.channels, dry: message.dry });
         else if (message.type === "takeEnd") this.finishTake(message.start, message.frames);
+        else if (message.type === "looperLayers") {
+          this.layersDone?.({ layers: message.layers, sampleRate: message.sampleRate });
+          this.layersDone = undefined;
+        }
       };
     });
 
@@ -223,6 +229,27 @@ export class LiveAudio {
     const done = new Promise<RecordedTake | undefined>((resolve) => (this.takeDone = resolve));
     this.post({ type: "record", on: false });
     return done;
+  }
+
+  looper(command: LooperCommand): void {
+    this.post({ type: "looper", command });
+  }
+
+  looperLayer(layer: number, options: { gain?: number; muted?: boolean }): void {
+    this.post({ type: "looperLayer", layer, ...options });
+  }
+
+  looperSettings(options: { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }): void {
+    this.post({ type: "looperSettings", ...options });
+  }
+
+  /** One pass of every looper layer (empty when stopped). */
+  looperLayers(): Promise<{ layers: [Float32Array, Float32Array][]; sampleRate: number }> {
+    if (!this.node) return Promise.resolve({ layers: [], sampleRate: 48000 });
+    return new Promise((resolve) => {
+      this.layersDone = resolve;
+      this.post({ type: "looperExport" });
+    });
   }
 
   private finishTake(start: number | undefined, frames: number | undefined) {
