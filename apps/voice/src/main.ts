@@ -40,8 +40,37 @@ async function boot() {
   const title = document.querySelector(".app-title");
   if (title) title.textContent = "MicFX Voice";
   document.title = "MicFX Voice";
+  addSourceLink();
   native.started();
+  registerOffline();
 }
+
+// MicFX is free software (AGPLv3): the page says so and links to its source.
+// Once at the foot of the window (beside the audio status) and once under the app's name
+// (shown on wide windows).
+function addSourceLink() {
+  const make = (text: string) =>
+    Object.assign(document.createElement("a"), {
+      className: "web-source",
+      href: SOURCE,
+      target: "_blank",
+      rel: "noopener",
+      textContent: text,
+      title: "MicFX is free software under the GNU AGPLv3. Get the source code of this web app and the desktop app.",
+    });
+  document.querySelector(".app-project-label")?.after(" · ", make("Free software · source"));
+  const foot = document.querySelector("footer.recorder .live-hint-line");
+  const status = foot?.querySelector(".audio-status");
+  if (foot) foot.insertBefore(make("Source (AGPL)"), status ?? null);
+}
+
+// Keeps the app's files so it opens and plays offline (production builds only).
+function registerOffline() {
+  if (import.meta.env.PROD && "serviceWorker" in navigator)
+    navigator.serviceWorker.register("sw.js").catch((error) => console.warn("MicFX: offline mode isn't available", error));
+}
+
+const SOURCE = "https://github.com/angelcandas/micfxweb";
 
 boot().catch((error) => {
   console.error(error);

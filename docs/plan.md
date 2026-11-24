@@ -152,7 +152,7 @@ Each PR is small enough to review, has CI, and UI PRs carry screenshots.
 5. **Desktop UI on the web bridge**: `packages/bridge`, the Voice app serving the desktop Live UI with web-only features hidden (plus the upstream `platform` change in the desktop repo).
 6. **Devices, storage, latency**: input/output pickers, user presets and UI prefs in IndexedDB, latency readout.
 7. **Record and backing track**: WAV recording to download, backing track from file, key detection in a Worker.
-8. **Deploy**: GitHub Pages workflow, PWA manifest and offline cache, link to source.
+8. **Deploy**: Cloudflare Pages from CI (chosen over GitHub Pages; see docs/deploy.md), PWA manifest and offline cache, link to source.
 9+. Looper, scenes/setlist, MIDI learn; then Practice (voice-only songs → stems in a Worker → coaching and lyrics).
 
 Then **MicFX DAW**: plan the `juce_events` shim (a message queue on the main thread) so `daw/*` and `Multitrack` can compile, decide where Auto Mix analysis runs (Workers, with the heavier learning parts possibly server-side), and reuse `daw.js` through the same bridge.

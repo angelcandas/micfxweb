@@ -14,3 +14,9 @@ body[data-platform="web"] :is(
 ) {
   display: none !important;
 }
+
+/* The source link beside the app's tagline (AGPLv3). */
+.web-source { color: inherit; text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.25); text-underline-offset: 2px; }
+.web-source:hover { color: var(--text, #e9ecf4); }
+.live-hint-line .web-source { flex: none; margin: 0 14px 0 auto; pointer-events: auto; }
+.live-hint-line .web-source + .audio-status { margin-left: 0; }
