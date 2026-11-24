@@ -224,4 +224,18 @@ describe("LiveEngine (desktop DSP in wasm)", () => {
     });
     engine.dispose();
   });
+
+  it("reports the tuner and the effect cards' readings", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    engine.setValue("tuneOn", 1);
+    engine.setValue("compOn", 1);
+    run(engine, voice(0.5));
+    const status = engine.status();
+    expect(status.note).toBeGreaterThan(55); // A3 = 57
+    expect(status.note).toBeLessThan(59);
+    expect(status.target).toBe(57);
+    expect(Object.keys(status.fx)).toContain("compressor");
+    expect(Object.keys(status.fx)).not.toContain("robot"); // off
+    engine.dispose();
+  });
 });

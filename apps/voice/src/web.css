@@ -1,0 +1,24 @@
+/* The desktop UI on the web: parts that need what the browser version doesn't have yet are
+   hidden until their PR lands (docs/plan.md, section 7). The desktop's own styles do the rest. */
+body[data-platform="web"] :is(
+  .mode-switch,            /* DAW mode: the MicFX DAW app */
+  .live-tracks,
+  .loop-toggle,            /* looper and instruments */
+  .practice-toggle,        /* Practice */
+  .midi-button,            /* MIDI learn (Web MIDI) */
+  .transport-button,       /* backing track and recording */
+  .record-button,
+  .record-time,
+  .transport-length,
+  .record-dry,
+  .record-folder,
+  .record-status,
+  .capture,
+  .computer-audio,         /* the computer's own sound */
+  .open-in-daw,
+  .tracks,
+  .tracks-toggle,
+  .add-track
+) {
+  display: none !important;
+}

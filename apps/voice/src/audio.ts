@@ -4,6 +4,8 @@ import workletUrl from "@micfx/engine/worklet?worker&url";
 import type { FromWorklet, ToWorklet, Values } from "@micfx/engine/messages";
 import { instantiateEngineModule, type FactoryPreset, type Meters, type ParameterInfo, type ValueInfo } from "@micfx/engine";
 
+export type { Meters };
+
 export interface LiveAudioInfo {
   values: ValueInfo[];
   parameters: Record<string, ParameterInfo>;
@@ -29,10 +31,19 @@ function compileEngine(): Promise<WebAssembly.Module> {
 
 /** The desktop parameters and factory presets, read from the engine before any audio starts. */
 export async function loadCatalog(): Promise<{ parameters: Record<string, ParameterInfo>; presets: FactoryPreset[] }> {
-  const engine = instantiateEngineModule(await compileEngine()).create(48000, 128);
+  const engine = await createShadowEngine();
   const catalog = { parameters: engine.parameterInfo(), presets: engine.factoryPresets() };
   engine.dispose();
   return catalog;
+}
+
+/**
+ * An engine on the page's own thread that never plays: it keeps the state (values, order,
+ * presets) and its rules, so the page can answer at once and the worklet gets the same state
+ * when the audio starts.
+ */
+export async function createShadowEngine() {
+  return instantiateEngineModule(await compileEngine()).create(48000, 128);
 }
 
 /** Mic -> MicFX engine -> speakers/headphones. */
@@ -106,6 +117,26 @@ export class LiveAudio {
     this.stream = undefined;
     this.node = undefined;
     this.context = undefined;
+  }
+
+  /** Whether meters carry the tuner and the effect cards' readings. */
+  wantStatus(on: boolean): void {
+    this.post({ type: "status", on });
+  }
+
+  /** Changes the order of the effects (module keys, first to last). */
+  setOrder(keys: string[]): void {
+    this.post({ type: "order", keys });
+  }
+
+  /** The AudioContext's rate, or undefined when stopped. */
+  get sampleRate(): number | undefined {
+    return this.context?.sampleRate;
+  }
+
+  /** The mic's name, when the browser tells it. */
+  get deviceLabel(): string {
+    return this.stream?.getAudioTracks()[0]?.label ?? "";
   }
 
   set(values: Values): void {
