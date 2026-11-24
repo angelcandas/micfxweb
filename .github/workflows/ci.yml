@@ -89,13 +89,41 @@ jobs:
         if: steps.secrets.outputs.ready
         run: npx --yes wrangler@4.160.0 pages deploy dist --project-name="$PROJECT" --branch=main --commit-hash="$GITHUB_SHA"
       - name: Attach the custom domain
-        if: steps.secrets.outputs.ready && env.DOMAIN != ''
+        if: steps.secrets.outputs.ready
         run: |
+          cf() { curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" "$@"; }
+          echo "Live at https://$PROJECT.pages.dev"
+          # The domain: the VOICE_DOMAIN variable, or micfxvoice.<the account's sobrinotech zone>.
+          if [ -z "$DOMAIN" ]; then
+            zones="$(cf "https://api.cloudflare.com/client/v4/zones?account.id=$CLOUDFLARE_ACCOUNT_ID&per_page=50" \
+                     | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)"
+            echo "Zones this token sees: ${zones:-none (it may lack Zone: Read)}"
+            zone="$(printf '%s\n' "$zones" | grep -E '^sobrinotech\.' | head -n 1 || true)"
+            [ -n "$zone" ] && DOMAIN="$PROJECT.$zone"
+          fi
+          if [ -z "$DOMAIN" ]; then
+            echo "::notice::No sobrinotech zone found: set the VOICE_DOMAIN variable (see docs/deploy.md). The app is on $PROJECT.pages.dev."
+            exit 0
+          fi
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
-          if curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | grep -q "\"name\":\"$DOMAIN\""; then
+          if cf "$api" | grep -q "\"name\":\"$DOMAIN\""; then
             echo "$DOMAIN is already attached"
           else
-            curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
-                 --data "{\"name\":\"$DOMAIN\"}" "$api" > /dev/null
+            cf -X POST --data "{\"name\":\"$DOMAIN\"}" "$api" > /dev/null
             echo "Attached $DOMAIN (Cloudflare adds the DNS record when the zone is on Cloudflare)"
           fi
+          # The DNS record (the API doesn't add it as the dashboard does): a proxied CNAME to the Pages site.
+          zone_id="$(cf "https://api.cloudflare.com/client/v4/zones?name=${DOMAIN#*.}" | grep -o '"id":"[0-9a-f]\{32\}"' | head -n 1 | cut -d'"' -f4 || true)"
+          if [ -n "$zone_id" ]; then
+            records="https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records"
+            if cf "$records?name=$DOMAIN" | grep -q "\"name\":\"$DOMAIN\""; then
+              echo "The DNS record for $DOMAIN is there"
+            else
+              cf -X POST --data "{\"type\":\"CNAME\",\"name\":\"$DOMAIN\",\"content\":\"$PROJECT.pages.dev\",\"proxied\":true}" "$records" > /dev/null \
+                && echo "Added the DNS record $DOMAIN -> $PROJECT.pages.dev" \
+                || echo "::warning::Couldn't add the DNS record (the token needs Zone: DNS: Edit): add a CNAME $DOMAIN -> $PROJECT.pages.dev"
+            fi
+          else
+            echo "::warning::$DOMAIN's zone isn't in this Cloudflare account: add a CNAME $DOMAIN -> $PROJECT.pages.dev where its DNS is"
+          fi
+          echo "::notice::MicFX Voice: https://$PROJECT.pages.dev and https://$DOMAIN"

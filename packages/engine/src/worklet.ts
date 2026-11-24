@@ -25,6 +25,8 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private parameterIds: string[] = [];
   private wantsStatus = false;
   private muted = false;
+  private micChunk: Float32Array | undefined;
+  private micUsed = 0;
   private meterTicks = 0;
   private session = new Session(sampleRate, (chunk: TakeChunk) => {
     const message: FromWorklet = { type: "takeChunk", ...chunk };
@@ -103,6 +105,16 @@ class MicFxProcessor extends AudioWorkletProcessor {
       case "transport":
         this.session.transport(message.action, message.seconds);
         break;
+      case "captureMic":
+        this.flushMic();
+        this.micChunk = message.on ? new Float32Array(Math.round(sampleRate * 0.1)) : undefined;
+        this.micUsed = 0;
+        break;
+      case "noiseProfile": {
+        const reply: FromWorklet = { type: "noiseProfileTaken", ok: engine.offerNoiseProfile(message.bins) };
+        this.port.postMessage(reply);
+        break;
+      }
       case "record": {
         if (message.on) {
           this.session.startRecording(Boolean(message.dry));
@@ -113,6 +125,31 @@ class MicFxProcessor extends AudioWorkletProcessor {
         break;
       }
     }
+  }
+
+  /** The raw mic into the sound check's chunks. */
+  private captureMic(mic: Float32Array) {
+    let done = 0;
+    while (this.micChunk && done < mic.length) {
+      const count = Math.min(mic.length - done, this.micChunk.length - this.micUsed);
+      this.micChunk.set(mic.subarray(done, done + count), this.micUsed);
+      this.micUsed += count;
+      done += count;
+      if (this.micUsed === this.micChunk.length) {
+        const length = this.micChunk.length;
+        this.flushMic();
+        this.micChunk = new Float32Array(length);
+      }
+    }
+  }
+
+  private flushMic() {
+    if (!this.micChunk || this.micUsed === 0) return;
+    const samples = this.micUsed === this.micChunk.length ? this.micChunk : this.micChunk.slice(0, this.micUsed);
+    const message: FromWorklet = { type: "micChunk", samples };
+    this.port.postMessage(message, [samples.buffer as ArrayBuffer]);
+    this.micChunk = undefined;
+    this.micUsed = 0;
   }
 
   private sendValues() {
@@ -129,6 +166,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
     if (!engine || !out || out.length === 0) return true;
 
     const mic = inputs[0]?.[0] ?? this.silent;
+    if (this.micChunk) this.captureMic(mic);
     const left = out[0]!;
     const right = out[1] ?? left;
     engine.render(mic, left, right);

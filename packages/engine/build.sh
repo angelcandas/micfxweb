@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Builds engine.wasm: the desktop app's DSP (extern/local-mic-effects/src/dsp, unchanged) plus
-# the LiveEngine wrapper, for WebAssembly with Emscripten (emcc on the PATH).
+# the LiveEngine wrapper, for WebAssembly with Emscripten (emcc on the PATH). And analysis.wasm:
+# the desktop's measuring and planning code (src/analysis, the sound check's plan), for Web
+# Workers, built with juce_events and juce_data_structures (patched: a message queue the page
+# runs) and the fuller part of the juce_audio_processors shim.
 #
 # The wasm is standalone (no Emscripten JS glue) and uses no threads, so the AudioWorklet can
 # instantiate it itself and the site needs no cross-origin isolation. Its few WASI imports are
@@ -24,7 +27,7 @@ stamp="$work/juce.stamp"
 want="$(git -C "$desktop/libs/JUCE" rev-parse HEAD) $(sha1sum "$root/patches/juce-wasm.patch" | cut -c1-40)"
 if [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$want" ]; then
   rm -rf "$juce" && mkdir -p "$juce"
-  for m in juce_core juce_audio_basics juce_audio_formats juce_dsp; do cp -R "$desktop/libs/JUCE/modules/$m" "$juce/"; done
+  for m in juce_core juce_audio_basics juce_audio_formats juce_dsp juce_events juce_data_structures; do cp -R "$desktop/libs/JUCE/modules/$m" "$juce/"; done
   (cd "$juce" && patch -p1 --binary --quiet < "$root/patches/juce-wasm.patch")
   echo "$want" > "$stamp"
 fi
@@ -39,31 +42,43 @@ flags=(
   -DJUCE_USE_MP3AUDIOFORMAT=0 -DJUCE_USE_LAME_AUDIO_FORMAT=0 -DJUCE_USE_WINDOWS_MEDIA_FORMAT=0
 )
 
-mkdir -p "$work/obj" "$out"
-sources=(
-  "$here/cpp/juce_modules.cpp"
-  "$here/cpp/juce_wasm_stubs.cpp"
-  "$here/cpp/LiveEngine.cpp"
-  "$here/cpp/api.cpp"
-  "$desktop/src/Parameters.cpp"
-  "$desktop/src/Presets.cpp"
-  "$desktop/src/analysis/Chords.cpp"
-  "$desktop/src/analysis/Key.cpp"
-  "$desktop/src/Looper.cpp"
-)
-objects=()
-for src in "${sources[@]}"; do
-  obj="$work/obj/$(basename "$src" .cpp).o"
-  # JUCE is the slow one: rebuild it only when the patched copy changed.
-  if [ "$src" != "$here/cpp/juce_modules.cpp" ] || [ ! -f "$obj" ] || [ "$stamp" -nt "$obj" ]; then
-    echo "  compile $(basename "$src")"
-    emcc "${flags[@]}" -c "$src" -o "$obj"
-  fi
-  objects+=("$obj")
-done
+studio_flags=("${flags[@]}" -DJUCE_MODULE_AVAILABLE_juce_events=1 -DJUCE_MODULE_AVAILABLE_juce_data_structures=1)
 
-em++ -O2 -msimd128 ${MICFX_LDFLAGS:-} "${objects[@]}" -o "$out/engine.wasm" \
-  -sSTANDALONE_WASM=1 --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 \
-  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied
+mkdir -p "$work/obj" "$work/obj-studio" "$out"
 
-echo "Built $(du -h "$out/engine.wasm" | cut -f1) $out/engine.wasm"
+# compile <dir> <flags-array-name> <sources...>: prints the objects. JUCE units are slow:
+# rebuilt only when the patched copy changed.
+compile() {
+  local dir="$1" flagsName="$2"; shift 2
+  local -n useFlags="$flagsName"
+  for src in "$@"; do
+    local obj="$dir/$(basename "$src" .cpp).o"
+    if [[ "$src" != */juce_modules.cpp && "$src" != */juce_studio_modules.cpp ]] || [ ! -f "$obj" ] || [ "$stamp" -nt "$obj" ]; then
+      echo "  compile $(basename "$src")" >&2
+      emcc "${useFlags[@]}" -c "$src" -o "$obj"
+    fi
+    echo "$obj"
+  done
+}
+
+link() {
+  local target="$1" exports="$2" stack="$3"; shift 3
+  em++ -O2 -msimd128 ${MICFX_LDFLAGS:-} "$@" -o "$out/$target" -sSTACK_SIZE="$stack" \
+    -sSTANDALONE_WASM=1 --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sEXPORTED_FUNCTIONS="$exports"
+  echo "Built $(du -h "$out/$target" | cut -f1) $out/$target"
+}
+
+mapfile -t engine_objects < <(compile "$work/obj" flags \
+  "$here/cpp/juce_modules.cpp" "$here/cpp/juce_wasm_stubs.cpp" "$here/cpp/LiveEngine.cpp" "$here/cpp/api.cpp" \
+  "$desktop/src/Parameters.cpp" "$desktop/src/Presets.cpp" "$desktop/src/analysis/Chords.cpp" "$desktop/src/analysis/Key.cpp" \
+  "$desktop/src/Looper.cpp")
+link engine.wasm _malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_status,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters,_micfx_detect_key,_micfx_looper_command,_micfx_looper_layer,_micfx_looper_settings,_micfx_looper_state,_micfx_looper_copy,_micfx_looper_copied,_micfx_offer_noise_profile 65536 "${engine_objects[@]}"
+
+# The analysis code reaches the DAW engine in places the sound check never calls; the
+# linker drops those, so only what the exports use is built in.
+mapfile -t analysis_objects < <(compile "$work/obj-studio" studio_flags \
+  "$here/cpp/juce_studio_modules.cpp" "$here/cpp/analysis_api.cpp" \
+  "$desktop/src/SoundCheck.cpp" "$desktop/src/Scenes.cpp" "$desktop/src/analysis/"*.cpp)
+# The analysis keeps big frames on the stack: 1 MB of it (the engine's default 64 KB is plenty there).
+link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile 1048576 \
+  "$work/obj/juce_modules.o" "$work/obj/juce_wasm_stubs.o" "${analysis_objects[@]}"

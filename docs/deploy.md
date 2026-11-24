@@ -21,7 +21,7 @@ the engine doesn't use SharedArrayBuffer.
    - secret `CLOUDFLARE_API_TOKEN`: the token
    - secret `CLOUDFLARE_ACCOUNT_ID`: the account ID (shown on the Cloudflare dashboard's
      overview, right column)
-   - variable `VOICE_DOMAIN`: for example `micfxvoice.sobrinotech.com`
+   - variable `VOICE_DOMAIN` (optional): for example `micfxvoice.sobrinotech.com`. Without it, the deploy uses `micfxvoice.<zone>` for a `sobrinotech.*` zone the token can see (Zone: Read), and adds its DNS record (Zone: DNS: Edit)
 3. Re-run the CI workflow on `main`, or push to it.
 
 The first deploy creates the `micfxvoice` Pages project. It then attaches `VOICE_DOMAIN`.

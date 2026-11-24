@@ -8,7 +8,9 @@
     "./messages": "./src/messages.ts",
     "./worklet": "./src/worklet.ts",
     "./session": "./src/session.ts",
-    "./engine.wasm": "./dist/engine.wasm"
+    "./analysis": "./src/analysis.ts",
+    "./engine.wasm": "./dist/engine.wasm",
+    "./analysis.wasm": "./dist/analysis.wasm"
   },
   "scripts": {
     "build": "bash build.sh",

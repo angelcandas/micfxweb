@@ -83,7 +83,8 @@ A thin `LiveEngine` class, written for the web but kept free of browser code so 
 | `Looper`, `Recorder` | ✅ Voice, later PR | Looper's DSP as is; recording writes WAV in JS (or `juce_audio_formats` WAV writer to memory) and saves to a download/OPFS |
 | `analysis/Coach`, `Lyrics`, `Structure`, `Practice` logic | ✅ Voice, Practice phase | Analysis in a Worker; the `Practice` class's file and thread handling rewritten in TS |
 | `stems/` (demucs.cpp) | ⚠️ Practice phase | demucs.cpp already runs in wasm in other projects; minutes per song on a laptop, so it runs in a Worker with progress, caches the stems in OPFS, and "voice-only" songs skip it. A server option is a later decision |
-| `Multitrack`, `daw/*` engine, `Warp`, `Exporter`, `analysis/Mix*` | ⏳ DAW app | Needs a `juce_events` shim or splitting the engine's message-thread parts; planned in the DAW phase |
+| `SoundCheck` planner, `analysis/*` | ✅ Voice | `analysis.wasm` in a Worker, built with `juce_events` and `juce_data_structures` (patched: a message queue and timers the page runs, `juce::wasmDispatchMessages`); the linker drops the DAW parts the sound check never calls |
+| `Multitrack`, `daw/*` engine, `Warp`, `Exporter`, `analysis/Mix*` | ⏳ DAW app | `daw/*`, `analysis/*` and the instruments' DSP already compile for wasm with the `juce_events` patch and the fuller shim; left: `PluginHost` (no plug-ins on the web), the instruments' editors, LAME for MP3 |
 | `instruments/*` | ⏳ DAW app | DSP should port; Web MIDI for input |
 | `PluginHost`, `PluginInsert` (VST3/AU) | ❌ | Not possible in a browser |
 | `McpServer`, `ComputerAudio` (system audio) | ❌ / later | No local server in a browser; tab audio capture via `getDisplayMedia` is possible later in Chrome |

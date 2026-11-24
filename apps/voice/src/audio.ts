@@ -64,6 +64,8 @@ export async function createShadowEngine() {
 /** Mic -> MicFX engine -> speakers/headphones. */
 export class LiveAudio {
   onMeters: (meters: LiveMeters) => void = () => {};
+  onMicChunk: (samples: Float32Array) => void = () => {};
+  private profileTaken: ((ok: boolean) => void) | undefined;
   /** Every parameter's value after a preset load. */
   onValues: (values: Values, order: string[]) => void = () => {};
   private context: AudioContext | undefined;
@@ -121,7 +123,11 @@ export class LiveAudio {
           this.onMeters(message);
         } else if (message.type === "takeChunk") this.takeChunks.push({ channels: message.channels, dry: message.dry });
         else if (message.type === "takeEnd") this.finishTake(message.start, message.frames);
-        else if (message.type === "looperLayers") {
+        else if (message.type === "micChunk") this.onMicChunk(message.samples);
+        else if (message.type === "noiseProfileTaken") {
+          this.profileTaken?.(message.ok);
+          this.profileTaken = undefined;
+        } else if (message.type === "looperLayers") {
           this.layersDone?.({ layers: message.layers, sampleRate: message.sampleRate });
           this.layersDone = undefined;
         }
@@ -241,6 +247,20 @@ export class LiveAudio {
 
   looperSettings(options: { bpm?: number; beatsPerBar?: number; locked?: boolean; volume?: number }): void {
     this.post({ type: "looperSettings", ...options });
+  }
+
+  /** The raw mic in chunks of about 0.1 s (onMicChunk), for a sound check. */
+  captureMic(on: boolean): void {
+    this.post({ type: "captureMic", on });
+  }
+
+  /** A sound check's room profile for the denoiser; true when it took it. */
+  offerNoiseProfile(bins: Float32Array): Promise<boolean> {
+    if (!this.node || !bins.length) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      this.profileTaken = resolve;
+      this.post({ type: "noiseProfile", bins });
+    });
   }
 
   /** One pass of every looper layer (empty when stopped). */

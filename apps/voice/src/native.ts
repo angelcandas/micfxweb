@@ -11,6 +11,8 @@ import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
 import { Tracks, encodeWav, download, songFiles } from "./tracks";
 import { Setlist } from "./setlist";
+import { SoundCheck } from "./sound-check";
+import { soundCheckPlan } from "./analysis-client";
 import type { LooperState } from "@micfx/engine";
 import { LiveHistory, Scenes, type ParameterAccess, type SavedScenes } from "./live-state";
 import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-map";
@@ -251,6 +253,32 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     return describeSetlist();
   };
 
+  // Sound check: the mic from the worklet, the desktop's planner in a worker.
+  const soundCheck = new SoundCheck({
+    params: access,
+    listen: async (on) => {
+      if (on) await startAudio(); // a click: it may start the sound
+      if (on && !audio.running) return false;
+      audio.captureMic(on);
+      return true;
+    },
+    plan: soundCheckPlan,
+    offerNoiseProfile: (bins) => audio.offerNoiseProfile(bins),
+    addScene: (name) => {
+      const index = scenes.add(name);
+      if (index >= 0) saveSoon();
+      return index;
+    },
+    sceneName: (index) => scenes.describe().scenes[index]?.name ?? "",
+    onChange: (state) => backend?.emit("soundCheck", state),
+  });
+  audio.onMicChunk = (samples) => {
+    // As the desktop captures it: after the input gain.
+    const gain = Math.pow(10, access.get("inputGain") / 20);
+    if (gain !== 1) for (let i = 0; i < samples.length; ++i) samples[i]! *= gain;
+    soundCheck.capture(samples);
+  };
+
   /** Every parameter, as the shadow engine has them. */
   const allValues = () => Object.fromEntries(ids.map((id) => [id, shadow.getValue(id) ?? parameters[id]!.default]));
 
@@ -285,6 +313,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         throw error;
       })
       .then(async () => {
+        soundCheck.prepare(audio.sampleRate ?? 48000);
         pushToAudio();
         audio.wantStatus(true);
         audio.looperSettings(looperPrefs);
@@ -500,7 +529,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
 
     // Not on the web yet. null is what the desktop's functions answer when their part
     // isn't there (no DAW session, no song): the panels then stay empty.
-    soundCheck: () => ({ phase: "idle", styles: [], style: 0 }),
+    soundCheck: (action = "state", options?: Record<string, unknown>) => soundCheck.handle(String(action), options ?? {}),
     daw: () => null,
     practice: () => null,
     looper: async (action = "status", options: Record<string, unknown> = {}) => {
