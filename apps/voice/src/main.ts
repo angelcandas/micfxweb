@@ -7,6 +7,9 @@ import { createNative } from "./native";
 import { addMetronome } from "./metronome-ui";
 import { addShowMode } from "./show-mode";
 import { addAccessibility } from "./a11y";
+import { addDiagnostics } from "./diagnostics";
+import { addDragAndDrop } from "./drop";
+import { addSendToDaw, takeFromDaw } from "./handoff";
 import { addLanguage } from "./i18n";
 import { addMicHelp } from "./mic-help";
 import { addPhoneLayout } from "./phone";
@@ -54,9 +57,22 @@ async function boot() {
   document.title = "MicFX Voice";
   addSourceLink();
   addWebSettings(native.web);
+  addDiagnostics(native.web);
   addMetronome(native.web);
   addShowMode();
   addVideo(native.web);
+  const handoff = { tracks: native.web.tracks, notify: recorderStatus };
+  addSendToDaw(handoff);
+  addDragAndDrop({
+    addBackingTrack: (file) => native.web.tracks.addBackingTrack(file),
+    practice: (action, options) => native.web.practice.handle(action, options),
+    hasPracticeSong: () => Boolean(native.web.practice.history()),
+    openSoundLink: (hash) => {
+      location.hash = hash; // (opened on hashchange)
+      return true;
+    },
+    notify: recorderStatus,
+  });
   addTabAudioNote();
   addMicHelp();
   addAccessibility();
@@ -65,6 +81,8 @@ async function boot() {
   addPracticeTools(native.web.practice, native.web.startAudio);
   addLanguage();
   native.started();
+  // Opened by MicFX DAW with its mix to sing over.
+  void native.web.restored.then(() => takeFromDaw(handoff));
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));
   // Keeps the app's files so it opens and plays offline (production builds only).
@@ -93,6 +111,14 @@ function addSourceLink() {
 
 
 const SOURCE = "source.zip";
+
+/** A line in the recorder's status (the desktop's recorderBar.setStatus). */
+function recorderStatus(message: string, error = false) {
+  const status = document.querySelector("footer.recorder .record-status");
+  if (!status) return;
+  status.textContent = message;
+  status.className = `record-status ${error ? "is-error" : ""}`;
+}
 
 boot().catch((error) => {
   console.error(error);

@@ -22,7 +22,7 @@ export interface RecordedTake {
 }
 
 /** The meters with the transport and the recorder, as the worklet sends them. */
-export type LiveMeters = Meters & { transport?: TransportState; recording?: number; countIn?: number; status?: unknown; looper?: LooperState; pitch?: Float64Array };
+export type LiveMeters = Meters & { transport?: TransportState; recording?: number; countIn?: number; status?: unknown; looper?: LooperState; pitch?: Float64Array; cpu?: number; late?: number };
 
 export interface LiveAudioInfo {
   values: ValueInfo[];

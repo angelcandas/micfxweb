@@ -31,6 +31,11 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private micUsed = 0;
   private pitchOn = false;
   private meterTicks = 0;
+  /** Time spent in process() since the last meters (ms) and the blocks it covered. */
+  private busyMs = 0;
+  private blocks = 0;
+  /** Blocks that took longer than their own length: the sound may have broken up. */
+  private late = 0;
   private session = new Session(sampleRate, (chunk: TakeChunk) => {
     const message: FromWorklet = { type: "takeChunk", ...chunk };
     const transfer = [
@@ -190,6 +195,9 @@ class MicFxProcessor extends AudioWorkletProcessor {
     const engine = this.engine;
     const out = outputs[0];
     if (!engine || !out || out.length === 0) return true;
+    // The time each block takes. A worklet's clock may only count whole milliseconds, but over
+    // many blocks the sum is still right (each block crosses a tick as often as it's long).
+    const began = now();
 
     const mic = inputs[0]?.[0] ?? this.silent;
     if (this.micChunk) this.captureMic(mic);
@@ -216,11 +224,22 @@ class MicFxProcessor extends AudioWorkletProcessor {
       right.fill(0);
     }
 
+    const took = now() - began;
+    this.busyMs += took;
+    this.blocks++;
+    // (not in the first second, while the engine warms up)
+    if (took > (left.length / sampleRate) * 1000 + 0.5 && currentFrame > sampleRate) this.late++;
+
     if (currentFrame >= this.nextMeterFrame) {
       this.nextMeterFrame = currentFrame + METER_INTERVAL_SECONDS * sampleRate;
       const session = this.session;
+      const cpu = this.blocks ? this.busyMs / ((this.blocks * left.length * 1000) / sampleRate) : 0;
+      this.busyMs = 0;
+      this.blocks = 0;
       const meters: FromWorklet = {
         type: "meters",
+        cpu,
+        late: this.late,
         ...engine.takeMeters(),
         transport: { position: session.position / sampleRate, length: session.length / sampleRate, playing: session.playing },
         recording: session.recordingSeconds,
@@ -234,6 +253,11 @@ class MicFxProcessor extends AudioWorkletProcessor {
     }
     return true;
   }
+}
+
+/** Milliseconds, as finely as the worklet's scope allows. */
+function now(): number {
+  return (globalThis as { performance?: { now(): number } }).performance?.now() ?? Date.now();
 }
 
 registerProcessor("micfx-live", MicFxProcessor);

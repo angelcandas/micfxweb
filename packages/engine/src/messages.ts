@@ -67,6 +67,10 @@ export type FromWorklet =
   | { type: "error"; message: string }
   | ({
       type: "meters";
+      /** Time the engine took over the time it had, since the last meters (1: all of it). */
+      cpu?: number;
+      /** Blocks so far that took longer than they last (the sound may have broken up). */
+      late?: number;
       status?: EngineStatus;
       transport: TransportState;
       recording: number;
