@@ -22,6 +22,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
   private nextMeterFrame = 0;
   private silent = new Float32Array(128);
   private parameterIds: string[] = [];
+  private wantsStatus = false;
 
   constructor(options: { processorOptions: { module: WebAssembly.Module } }) {
     super();
@@ -60,6 +61,9 @@ class MicFxProcessor extends AudioWorkletProcessor {
       case "order":
         engine.setOrder(message.keys);
         break;
+      case "status":
+        this.wantsStatus = message.on;
+        break;
       case "loadPreset":
         if (engine.loadPreset(message.index)) this.sendValues();
         break;
@@ -86,7 +90,7 @@ class MicFxProcessor extends AudioWorkletProcessor {
 
     if (currentFrame >= this.nextMeterFrame) {
       this.nextMeterFrame = currentFrame + METER_INTERVAL_SECONDS * sampleRate;
-      const meters: FromWorklet = { type: "meters", ...engine.takeMeters() };
+      const meters: FromWorklet = { type: "meters", ...engine.takeMeters(), ...(this.wantsStatus ? { status: engine.status() } : {}) };
       this.port.postMessage(meters);
     }
     return true;

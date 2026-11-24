@@ -68,8 +68,33 @@ struct Instance
         return true;
     }
 
+    // The tuner and the effect cards' live readings: the Live part of the desktop editor's
+    // "meters" event (PluginEditor::timerCallback).
+    juce::var describeStatus()
+    {
+        auto* status = new juce::DynamicObject();
+        auto& chain = engine.getChain();
+        if (auto* pitch = chain.find<fx::modules::Pitch>())
+        {
+            const auto& tuner = pitch->getEngine();
+            status->setProperty ("note", tuner.detectedNote.load());
+            status->setProperty ("target", tuner.tunedNote.load());
+            juce::Array<juce::var> voices;
+            for (const auto& note : tuner.voiceNotes)
+                voices.add (note.load());
+            status->setProperty ("voices", voices);
+        }
+        auto* effects = new juce::DynamicObject();
+        for (int i = 0; i < chain.size(); ++i)
+            if (auto meter = fx::describeMeter (chain[i], spectrumAnalyser); ! meter.isVoid())
+                effects->setProperty (fx::getModuleKey (chain[i].getType()), meter);
+        status->setProperty ("fx", juce::var (effects));
+        return juce::var (status);
+    }
+
     micfx::web::WebParameters parameters;
     micfx::web::LiveEngine engine;
+    fx::SpectrumAnalyser spectrumAnalyser;
     std::vector<float> input, left, right;
     float meters[3] {};
 };
@@ -159,6 +184,12 @@ MICFX_EXPORT void micfx_set_order (Instance* instance, int length)
 MICFX_EXPORT int micfx_get_order (Instance* instance)
 {
     return writeResult (instance->engine.getOrder().joinIntoString (","));
+}
+
+// The tuner and effect readings as JSON: { note, target, voices, fx: { key: reading } }.
+MICFX_EXPORT int micfx_status (Instance* instance)
+{
+    return writeResult (juce::JSON::toString (instance->describeStatus(), juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::none)));
 }
 
 // [input peak, output peak, latency in samples], peaks since the last call.

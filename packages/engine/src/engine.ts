@@ -31,6 +31,16 @@ export interface FactoryPreset {
   order: string[];
 }
 
+export interface EngineStatus {
+  /** The sung note (MIDI, fractional), -1 when none. */
+  note: number;
+  /** The note autotune aims at, -1 when none. */
+  target: number;
+  /** The harmonizer's voices' notes, -1 for silent. */
+  voices: number[];
+  fx: Record<string, unknown>;
+}
+
 export interface Meters {
   /** Peak since the last read, after the input gain (linear). */
   input: number;
@@ -48,6 +58,7 @@ interface Exports {
   micfx_parameter_info(engine: number): number;
   micfx_presets(): number;
   micfx_load_preset(engine: number, index: number): number;
+  micfx_status(engine: number): number;
   micfx_create(sampleRate: number, maxBlockSize: number): number;
   micfx_destroy(engine: number): void;
   micfx_input(engine: number): number;
@@ -201,6 +212,14 @@ export class LiveEngine {
 
   getOrder(): string[] {
     return this.readResult(this.x.micfx_get_order(this.handle)).split(",").filter(Boolean);
+  }
+
+  /**
+   * The tuner and the effect cards' live readings, as the desktop's "meters" event has them:
+   * { note, target, voices, fx: { moduleKey: reading } } (only effects that are on).
+   */
+  status(): EngineStatus {
+    return JSON.parse(this.readResult(this.x.micfx_status(this.handle))) as EngineStatus;
   }
 
   /** Peaks since the last call, and the effects' latency. */

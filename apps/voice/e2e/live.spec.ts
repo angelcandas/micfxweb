@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("the mic goes through the engine to the output", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/simple.html");
   await page.getByRole("button", { name: "Start mic" }).click();
   await expect(page.locator("body")).toHaveAttribute("data-audio", "on");
 
@@ -32,7 +32,7 @@ test("the mic goes through the engine to the output", async ({ page }) => {
 });
 
 test("lists the desktop's factory presets before the mic starts", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/simple.html");
   await expect(page.locator("body")).toHaveAttribute("data-catalog", "ready");
   const select = page.getByLabel("Voice preset");
   expect(await select.locator("option").count()).toBeGreaterThanOrEqual(24);
