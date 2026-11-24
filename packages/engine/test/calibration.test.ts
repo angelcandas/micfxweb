@@ -7,19 +7,27 @@ const BLOCK = 128;
 /** Runs a calibration through a fake room: the output comes back `delay` frames later, quieter, with noise and an echo. */
 function calibrate(delay: number, gain: number, noise: number) {
   const calibrator = new Calibrator(RATE);
-  const line: number[] = new Array(delay + 4000).fill(0);
+  // What the mic hears, by absolute frame (grown as needed): no array shifting, so it's quick.
+  let heard = new Float32Array(1 << 18);
+  const add = (at: number, v: number) => {
+    if (at >= heard.length) {
+      const bigger = new Float32Array(heard.length * 2);
+      bigger.set(heard);
+      heard = bigger;
+    }
+    heard[at]! += v;
+  };
   let seed = 1;
   const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
-  while (!calibrator.done) {
+  for (let now = 0; !calibrator.done; now += BLOCK) {
     const mic = new Float32Array(BLOCK);
-    for (let i = 0; i < BLOCK; ++i) mic[i] = line.shift()! + noise * random();
+    for (let i = 0; i < BLOCK; ++i) mic[i] = (heard[now + i] ?? 0) + noise * random();
     const left = new Float32Array(BLOCK).fill(0.3); // the effects: replaced by the clicks
     const right = new Float32Array(BLOCK);
     calibrator.process(left, right, mic, BLOCK);
     for (let i = 0; i < BLOCK; ++i) {
-      line[delay - BLOCK + i] = (line[delay - BLOCK + i] ?? 0) + gain * left[i]!;
-      line[delay - BLOCK + 2400 + i] = (line[delay - BLOCK + 2400 + i] ?? 0) + 0.8 * gain * left[i]!; // a wall 50 ms later
-      line.push(0);
+      add(now + delay + i, gain * left[i]!);
+      add(now + delay + 2400 + i, 0.8 * gain * left[i]!); // a wall 50 ms later
     }
   }
   return calibrator.result();
