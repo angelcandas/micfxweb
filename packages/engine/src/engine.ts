@@ -150,6 +150,10 @@ export function makeImports(memory: () => WebAssembly.Memory): WebAssembly.Impor
         return 0;
       },
       environ_get: () => 0,
+      // (abort() in the C++: stems.wasm can reach it)
+      proc_exit: (code: number) => {
+        throw new Error(`The audio engine stopped (exit ${code}).`);
+      },
       fd_close: fail,
       fd_seek: fail,
       fd_read: fail,
