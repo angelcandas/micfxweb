@@ -4,6 +4,7 @@
 import { JuceBackend } from "@micfx/bridge";
 import { createShadowEngine, LiveAudio } from "./audio";
 import { createNative } from "./native";
+import { addWebSettings, openSharedSound } from "./web-panels";
 import "./web.css";
 
 const DESKTOP = new URL("desktop/", document.baseURI).href;
@@ -41,7 +42,10 @@ async function boot() {
   if (title) title.textContent = "MicFX Voice";
   document.title = "MicFX Voice";
   addSourceLink();
+  addWebSettings(native.web);
   native.started();
+  openSharedSound(native.web);
+  addEventListener("hashchange", () => openSharedSound(native.web));
   registerOffline();
 }
 
