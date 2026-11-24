@@ -7,10 +7,14 @@
 import type { JuceBackend, NativeFunction, ParameterInfo } from "@micfx/bridge";
 import type { LiveEngine } from "@micfx/engine";
 import type { LiveAudio, Meters } from "./audio";
+import { createAudioSettings, savedInput, savedOutput } from "./devices";
+import { createLibrary } from "./library";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
 const METER_IDLE_MS = 250;
+const SESSION_KEY = "micfx.session";
+const SESSION_SAVE_MS = 400;
 
 const toDb = (peak: number) => (peak > 0 ? Math.max(-100, 20 * Math.log10(peak)) : -100);
 
@@ -33,6 +37,31 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   let lastMeters: Meters = { input: 0, output: 0, latencySamples: 0 };
   let status: Record<string, unknown> = {};
   let starting: Promise<unknown> | undefined;
+
+  // The last session (values, order, preset) comes back, as the desktop app's state does.
+  const restore = () => {
+    try {
+      const saved = JSON.parse(storage()?.getItem(SESSION_KEY) ?? "null") as { values?: Record<string, number>; order?: string[]; preset?: number } | null;
+      if (!saved) return;
+      for (const [id, value] of Object.entries(saved.values ?? {})) if (id in parameters) shadow.setValue(id, Number(value));
+      if (Array.isArray(saved.order)) shadow.setOrder(saved.order.map(String));
+      currentPreset = typeof saved.preset === "number" ? saved.preset : -1;
+      lastOrder = shadow.getOrder().join(",");
+    } catch {
+      // A broken entry: start from the defaults.
+    }
+  };
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const saveSoon = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        storage()?.setItem(SESSION_KEY, JSON.stringify({ values: allValues(), order: shadow.getOrder(), preset: currentPreset }));
+      } catch {
+        // Storage full or blocked: the session just isn't kept.
+      }
+    }, SESSION_SAVE_MS);
+  };
 
   /** Every parameter, as the shadow engine has them. */
   const allValues = () => Object.fromEntries(ids.map((id) => [id, shadow.getValue(id) ?? parameters[id]!.default]));
@@ -60,7 +89,13 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   const startAudio = () => {
     if (audio.running) return Promise.resolve();
     starting ??= audio
-      .start()
+      .setOutput(savedOutput())
+      .then(() => audio.start(savedInput() || undefined))
+      .catch((error) => {
+        // The saved mic is gone (unplugged): the default one.
+        if (savedInput() && error instanceof DOMException && /Overconstrained|NotFound/.test(error.name)) return audio.start();
+        throw error;
+      })
       .then(() => {
         pushToAudio();
         audio.wantStatus(true);
@@ -72,6 +107,23 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       .finally(() => (starting = undefined));
     return starting;
   };
+
+  // The setup strip asks for the audio state every second, so changes show without a nudge.
+  const library = createLibrary({
+    shadow,
+    values: allValues,
+    apply: (values, order) => {
+      shadow.resetValues();
+      for (const [id, value] of Object.entries(values)) if (id in parameters && id !== "inputGain") shadow.setValue(id, value);
+      shadow.setOrder(order);
+      currentPreset = -1;
+      pushToAudio();
+      syncPage();
+      saveSoon();
+    },
+  });
+
+  const settings = createAudioSettings(audio, () => startAudio(), () => {});
 
   audio.onMeters = (meters) => {
     lastMeters = meters;
@@ -85,7 +137,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     const effectsMs = rate ? (lastMeters.latencySamples / rate) * 1000 : 0;
     return {
       available: true,
-      device: running ? audio.deviceLabel || "Microphone" : "Browser audio",
+      device: running ? audio.deviceLabel || "Microphone" : "Sound off · click to start",
       rate: rate ?? 48000,
       buffer: 128,
       latencyMs: Math.max(0, total - effectsMs),
@@ -128,6 +180,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       currentPreset = Number(index);
       audio.loadPreset(currentPreset);
       syncPage();
+      saveSoon();
       return currentPreset;
     },
 
@@ -146,6 +199,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
         shadow.setOrder(keys);
         audio.setOrder(shadow.getOrder());
         lastOrder = shadow.getOrder().join(","); // the page asked for it: no event back
+        saveSoon();
       }
       return shadow.getOrder();
     },
@@ -181,6 +235,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       // "headphones" (the first-run card's "I'm wearing headphones") and "settings" (the
       // status strip) are clicks, so they may start the mic.
       if (action === "headphones" || action === "settings") await startAudio();
+      if (action === "settings") void settings.open();
       return describeAudio();
     },
 
@@ -198,7 +253,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     liveMacros: () => null,
     scenes: () => null,
     setlist: () => null,
-    library: () => null,
+    library,
     midi: () => null,
     capture: () => null,
     computerAudio: () => null,
@@ -217,6 +272,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     singAlongToDaw: () => null,
   };
 
+  restore();
+
   return {
     functions,
     attach(b: JuceBackend) {
@@ -227,6 +284,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     parameterChanged(id: string, value: number) {
       shadow.setValue(id, value);
       audio.set({ [id]: value });
+      saveSoon();
     },
     /** The desktop UI has loaded: the meters event starts. */
     started() {

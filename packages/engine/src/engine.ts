@@ -8,6 +8,8 @@ export interface ValueInfo {
   id: string;
   defaultValue: number;
   isSwitch: boolean;
+  /** The module's key ("reverb", "pitch"...), "" for the input and output gains. */
+  module: string;
 }
 
 /** One desktop parameter, as the desktop's "getParameterInfo" native function describes it. */
@@ -200,8 +202,8 @@ export class LiveEngine {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [id = "", value = "0", isSwitch = "0"] = line.split("=");
-        return { id, defaultValue: Number(value), isSwitch: isSwitch === "1" };
+        const [id = "", value = "0", isSwitch = "0", module = ""] = line.split("=");
+        return { id, defaultValue: Number(value), isSwitch: isSwitch === "1", module };
       });
   }
 

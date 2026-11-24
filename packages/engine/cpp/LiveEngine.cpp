@@ -20,10 +20,10 @@ LiveEngine::LiveEngine (double sampleRate, int maxBlockSize)
     {
         auto& module = chain[m];
         for (int v = 0; v < module.getNumValues(); ++v)
-            valueInfo.push_back ({ module.getValueId (v), module.getValue (v).load(), module.isSwitch (v) });
+            valueInfo.push_back ({ module.getValueId (v), module.getValue (v).load(), module.isSwitch (v), fx::getModuleKey (module.getType()) });
     }
-    valueInfo.push_back ({ "inputGain", 0.0f, false });
-    valueInfo.push_back ({ "outputGain", 0.0f, false });
+    valueInfo.push_back ({ "inputGain", 0.0f, false, {} });
+    valueInfo.push_back ({ "outputGain", 0.0f, false, {} });
 
     chain.prepare (spec);
     inputGain.reset();

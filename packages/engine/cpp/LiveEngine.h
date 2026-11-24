@@ -29,8 +29,9 @@ public:
     bool setValue (const juce::String& id, float value) noexcept;
     bool getValue (const juce::String& id, float& value) const noexcept;
 
-    // Every value ID, with its default (the value it has when the engine is made).
-    struct ValueInfo { juce::String id; float defaultValue; bool isSwitch; };
+    // Every value ID, with its default (the value it has when the engine is made) and its
+    // module's key ("" for the gains).
+    struct ValueInfo { juce::String id; float defaultValue; bool isSwitch; juce::String module; };
     const std::vector<ValueInfo>& getValueInfo() const noexcept { return valueInfo; }
 
     // Every value back to its default (presets start from there).

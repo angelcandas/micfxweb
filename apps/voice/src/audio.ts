@@ -55,6 +55,7 @@ export class LiveAudio {
   private node: AudioWorkletNode | undefined;
   private stream: MediaStream | undefined;
   private latencySamples = 0;
+  private outputId = "";
 
   get running(): boolean {
     return this.context?.state === "running";
@@ -104,10 +105,18 @@ export class LiveAudio {
       };
     });
 
+    if (this.outputId) await this.setOutput(this.outputId).catch(() => {});
     context.createMediaStreamSource(this.stream).connect(node);
     node.connect(context.destination);
     await context.resume();
     return ready;
+  }
+
+  /** Plays through another output (where the browser can choose: Chrome, Edge). "" is the default. */
+  async setOutput(deviceId: string): Promise<void> {
+    this.outputId = deviceId;
+    const context = this.context as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | undefined;
+    await context?.setSinkId?.(deviceId);
   }
 
   async stop(): Promise<void> {

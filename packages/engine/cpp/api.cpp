@@ -148,12 +148,12 @@ MICFX_EXPORT float micfx_get_value (Instance* instance, int idLength)
 
 MICFX_EXPORT void micfx_reset_values (Instance* instance) { instance->resetToDefaults(); }
 
-// Every engine value as "id=default=switch" lines.
+// Every engine value as "id=default=switch=moduleKey" lines.
 MICFX_EXPORT int micfx_value_info (Instance* instance)
 {
     juce::String lines;
     for (const auto& info : instance->engine.getValueInfo())
-        lines << info.id << "=" << juce::String (info.defaultValue) << "=" << (info.isSwitch ? "1" : "0") << "\n";
+        lines << info.id << "=" << juce::String (info.defaultValue) << "=" << (info.isSwitch ? "1" : "0") << "=" << info.module << "\n";
     return writeResult (lines);
 }
 

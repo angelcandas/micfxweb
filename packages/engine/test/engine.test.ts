@@ -54,7 +54,8 @@ describe("LiveEngine (desktop DSP in wasm)", () => {
     for (const id of ["hpfOn", "tuneOn", "tuneSpeed", "reverbOn", "reverbMix", "harmonyOn", "inputGain", "outputGain"])
       expect(ids).toContain(id);
     expect(info.every((v) => Number.isFinite(v.defaultValue))).toBe(true);
-    expect(info.find((v) => v.id === "reverbOn")?.isSwitch).toBe(true);
+    expect(info.find((v) => v.id === "reverbOn")).toMatchObject({ isSwitch: true, module: "reverb" });
+    expect(info.find((v) => v.id === "harmonyOn")?.module).toBe("pitch");
     engine.dispose();
   });
 
