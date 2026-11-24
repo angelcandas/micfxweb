@@ -7,7 +7,9 @@ import { createNative } from "./native";
 import { addMetronome } from "./metronome-ui";
 import { addShowMode } from "./show-mode";
 import { addAccessibility } from "./a11y";
+import { addLanguage } from "./i18n";
 import { addMicHelp } from "./mic-help";
+import { addPhoneLayout } from "./phone";
 import { addTabAudioNote } from "./tab-audio";
 import { addVideo } from "./video";
 import { registerOffline } from "./update";
@@ -56,6 +58,8 @@ async function boot() {
   addTabAudioNote();
   addMicHelp();
   addAccessibility();
+  addPhoneLayout();
+  addLanguage();
   native.started();
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));
