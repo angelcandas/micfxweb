@@ -3,6 +3,8 @@ import type { ChooserRequest, FileEntry, FromWorker, Rings, ToWorker } from "./p
 import EngineWorker from "./engine-worker?worker";
 import workletUrl from "./daw-worklet?worker&url";
 
+const MAX_INPUTS = 16; // the engine's input ring (PluginProcessor::maxAppInputs)
+
 export type EventHandler = (name: string, payload: unknown) => void;
 export type ChooserHandler = (request: ChooserRequest) => Promise<string[]>;
 
@@ -15,7 +17,13 @@ export class DawEngine {
   private rings?: Rings;
   context?: AudioContext;
   private node?: AudioWorkletNode;
-  private mic?: MediaStreamAudioSourceNode;
+  private sources: MediaStreamAudioSourceNode[] = [];
+  private splitters: ChannelSplitterNode[] = [];
+  private merger?: ChannelMergerNode;
+  private streams: MediaStream[] = [];
+  private channelCount = 0;
+  /** The inputs' names, in the order tracks see them. */
+  inputNames: string[] = [];
   persistent = false;
   home = "/home/web";
   load = 0;
@@ -54,27 +62,76 @@ export class DawEngine {
     if (this.context?.state === "suspended") void this.context.resume().then(() => this.updateAudio());
   }
 
-  /** The microphone (or audio interface) into the engine, for recording. */
-  async connectInput(deviceId?: string): Promise<boolean> {
+  /** The microphone (or audio interface) into the engine, for recording. With several
+   * devices (plan point 26) their channels follow each other: the first device's are inputs
+   * 1, 2..., the next one's come after, up to 16. Tracks pick their input by these names. */
+  async connectInput(deviceIds?: string[]): Promise<boolean> {
     if (!this.context || !this.node) return false;
-    if (this.mic && !deviceId) return true;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 } },
-      });
-      this.mic?.disconnect();
-      this.mic = this.context.createMediaStreamSource(stream);
-      this.mic.connect(this.node);
-      this.updateAudio();
-      return true;
-    } catch (error) {
-      console.warn("MicFX DAW: no microphone", error);
-      return false;
+    if (this.sources.length && !deviceIds) return true;
+    const wanted = deviceIds?.length ? deviceIds : [undefined];
+    const streams: { stream: MediaStream; label: string }[] = [];
+    for (const deviceId of wanted) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 16 } },
+        });
+        streams.push({ stream, label: stream.getAudioTracks()[0]?.label || "Input" });
+      } catch (error) {
+        console.warn("MicFX DAW: couldn't open an input", deviceId, error);
+      }
     }
+    if (!streams.length) return false;
+
+    this.disconnectInputs();
+    const sources = streams.map(({ stream }) => this.context!.createMediaStreamSource(stream));
+    const channels = sources.map((source, i) => Math.max(1, streams[i]!.stream.getAudioTracks()[0]?.getSettings().channelCount ?? source.channelCount));
+    const total = Math.min(MAX_INPUTS, channels.reduce((a, b) => a + b, 0));
+    const names: string[] = [];
+    if (sources.length === 1) {
+      sources[0]!.connect(this.node);
+      for (let ch = 0; ch < total; ch++) names.push(total === 1 ? streams[0]!.label : `${streams[0]!.label} ${ch + 1}`);
+      this.merger = undefined;
+    } else {
+      this.merger = this.context.createChannelMerger(total);
+      let next = 0;
+      sources.forEach((source, i) => {
+        const count = Math.min(channels[i]!, total - next);
+        if (count <= 0) return;
+        source.channelCountMode = "explicit";
+        source.channelCount = channels[i]!;
+        const splitter = this.context!.createChannelSplitter(channels[i]!);
+        source.connect(splitter);
+        for (let ch = 0; ch < count; ch++) {
+          splitter.connect(this.merger!, ch, next + ch);
+          names.push(count === 1 ? streams[i]!.label : `${streams[i]!.label} ${ch + 1}`);
+        }
+        this.splitters.push(splitter);
+        next += count;
+      });
+      this.merger.connect(this.node);
+    }
+    this.node.channelCountMode = "explicit";
+    this.node.channelCount = total;
+    this.sources = sources;
+    this.streams = streams.map((s) => s.stream);
+    this.channelCount = total;
+    this.inputNames = names;
+    this.post({ type: "inputNames", names });
+    this.updateAudio();
+    return true;
+  }
+
+  private disconnectInputs() {
+    for (const node of [...this.sources, ...this.splitters, ...(this.merger ? [this.merger] : [])]) node.disconnect();
+    for (const stream of this.streams) for (const track of stream.getTracks()) track.stop();
+    this.sources = [];
+    this.splitters = [];
+    this.streams = [];
+    this.merger = undefined;
   }
 
   get inputChannels() {
-    return this.mic ? Math.max(1, this.mic.channelCount) : 0;
+    return this.sources.length ? this.channelCount : 0;
   }
 
   /** The output's latency (seconds): the engine's lead plus what the browser adds. */

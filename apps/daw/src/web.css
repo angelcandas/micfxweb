@@ -36,3 +36,26 @@ body[data-web-app="daw"] .topbar .mode-switch { display: none !important; }
 }
 .web-dialog-buttons .web-dialog-primary { background: var(--accent, #6e8cff); border-color: transparent; color: #0b0d12; font-weight: 600; }
 @media (max-width: 480px) { .web-dialog-buttons { flex-wrap: wrap; } }
+
+/* Autosave status next to the project name (versions.ts). */
+.web-saved { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.25); text-underline-offset: 2px; }
+.web-saved:hover { color: var(--text, #e9ecf4); }
+.web-dialog-buttons button:disabled { opacity: 0.5; cursor: default; }
+body[data-web-app="daw"] .app-project { max-width: min(560px, 50vw); }
+
+/* The project menu under the save status (versions.ts). */
+.web-menu {
+  position: fixed; z-index: 10001; width: min(300px, calc(100vw - 16px)); padding: 4px; box-sizing: border-box; border-radius: 8px;
+  background: var(--panel, #171a22); border: 1px solid var(--line, #2a2f3c); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font: 13px/1.35 var(--font, system-ui, sans-serif); color: var(--text, #e9ecf4);
+}
+.web-menu-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.web-menu-item:hover, .web-menu-item:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
+.web-menu-hint { color: var(--muted, #8791a7); font-size: 12px; }
+
+/* MIDI devices (midi.ts). */
+.web-midi-list { padding: 6px 0; }
+.web-midi-head { margin: 6px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted, #8791a7); }
+.web-midi-row { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; padding: 6px 12px; cursor: pointer; }
+.web-midi-row .web-menu-hint { grid-column: 2; }
+.web-midi-row:hover { background: rgba(255, 255, 255, 0.05); }

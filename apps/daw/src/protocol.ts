@@ -38,6 +38,7 @@ export type ToWorker =
   | { type: "chooserResult"; id: number; paths: string[] }
   | { type: "audio"; targetFrames: number; inputChannels: number; roundTripFrames: number; paused: boolean }
   | { type: "midi"; status: number; data1: number; data2: number }
+  | { type: "inputNames"; names: string[] }
   | { type: "writeFile"; reqId: number; path: string; data: ArrayBuffer }
   | { type: "readFile"; reqId: number; path: string }
   | { type: "list"; reqId: number; path: string }

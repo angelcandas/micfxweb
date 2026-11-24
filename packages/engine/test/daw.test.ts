@@ -15,6 +15,8 @@ interface DawModule {
 let m: DawModule;
 const pending = new Map<number, (value: unknown) => void>();
 const events: string[] = [];
+const autoMixEvents: Record<string, unknown>[] = [];
+const exportEvents: { progress?: number; done?: boolean; cancelled?: boolean; error?: string; files?: string[] }[] = [];
 let nextId = 1;
 let timers: ReturnType<typeof setInterval>[] = [];
 
@@ -40,7 +42,7 @@ beforeAll(async () => {
   const { default: createDawModule } = await import(/* @vite-ignore */ url);
   m = await createDawModule({
     onDawComplete: (id: number, json: string) => { pending.get(id)?.(JSON.parse(json)); pending.delete(id); },
-    onDawEvent: (name: string) => events.push(name),
+    onDawEvent: (name: string, json: string) => { events.push(name); if (name === "dawExport") exportEvents.push(JSON.parse(json)); if (name === "dawAutoMix") autoMixEvents.push(JSON.parse(json)); },
     onDawChooser: () => {},
     onDawClipboard: () => {},
     print: () => {},
@@ -97,6 +99,110 @@ describe("daw.wasm", () => {
     };
     expect(list("/home/web/Documents")).toContain("Test Song.micfx");
   });
+
+  it("keeps the undo history and versions across a restart", async () => {
+    const names = async () => ((await daw("session")).tracks as { name: string }[]).map((t) => t.name);
+    // One click after another (the history follows the undo manager between them).
+    const click = async (command: string, args: object = {}) => { await daw(command, args); await new Promise((r) => setTimeout(r, 30)); };
+    await click("addTrack", { name: "Keep A" });
+    await click("addTrack", { name: "Keep B" });
+    await click("undo");
+    expect(await names()).toContain("Keep A");
+    expect(await names()).not.toContain("Keep B");
+    const before = await call("webHistory", ["flush"]);
+    expect(before.unsaved).toBe(true);
+    expect(before.savedAt).toBeGreaterThan(0);
+
+    // The tab closes (no clean shutdown) and comes back.
+    m.ccall("micfx_daw_destroy", null, [], []);
+    m.ccall("micfx_daw_create", "number", ["number", "number"], [48000, 128]);
+    await daw("mode", { daw: true });
+    let session = await daw("session");
+    expect(session.project.name).toBe("Test Song");
+    expect(session.project.recoverable || "").toBe("");
+    expect(await names()).toContain("Keep A");
+    expect(await names()).not.toContain("Keep B");
+    expect(session.canUndo).toBe(true);
+    expect(session.canRedo).toBe(true);
+
+    await daw("redo");
+    expect(await names()).toContain("Keep B");
+    await daw("undo");
+    await daw("undo");
+    expect(await names()).not.toContain("Keep A");
+    await daw("redo");
+    session = await daw("session");
+    expect(session.tracks.map((t: { name: string }) => t.name)).toContain("Keep A");
+
+    // Saving makes a version; going back to it works.
+    await daw("save");
+    await new Promise((r) => setTimeout(r, 400));
+    const history = await call("webHistory", []);
+    const saved = history.versions.find((v: { saved: boolean }) => v.saved);
+    expect(saved).toBeTruthy();
+    await daw("addTrack", { name: "Later" });
+    expect(await names()).toContain("Later");
+    expect((await call("webHistory", ["restore", saved.id])).ok).toBe(true);
+    expect(await names()).not.toContain("Later");
+    expect(await names()).toContain("Keep A");
+  });
+
+  it("packs the project as a desktop project and unpacks it", async () => {
+    const staged = await call("webProject", ["stage"]);
+    expect(staged.ok).toBe(true);
+    expect(staged.files).toContain("project.xml");
+    expect(staged.files.some((f: string) => f.startsWith("Audio/") && f.endsWith(".wav"))).toBe(true);
+
+    const packed = await call("webProject", ["pack"]);
+    expect(packed.ok).toBe(true);
+    expect(packed.path).toMatch(/Test Song\.micfxproj$/);
+    const unpacked = await call("webProject", ["unpack", packed.path]);
+    expect(unpacked.ok).toBe(true);
+    expect(unpacked.folder).toBe("/home/web/Documents/MicFX Projects/Test Song.micfx");
+    const listed = m.ccall("micfx_daw_list", "number", ["string"], [unpacked.folder]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const names = (JSON.parse((m as any).UTF8ToString(listed)) as { name: string }[]).map((e) => e.name);
+    m._free(listed);
+    expect(names).toEqual(expect.arrayContaining(["project.xml", "Audio"]));
+    expect(names).not.toContain("History");
+    expect((await call("webProject", ["cleanup"])).ok).toBe(true);
+  });
+
+  it.each(["wav", "flac", "mp3"])("exports the mix as %s in the background, with progress", async (format) => {
+    exportEvents.length = 0;
+    const started = await daw("export", { kind: "mix", format, folder: "/home/web/Music/Exports", name: `Mix ${format}`, overwrite: true });
+    expect(started.ok).toBe(true);
+    for (let i = 0; i < 300 && !exportEvents.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 50));
+    const done = exportEvents.find((e) => e.done)!;
+    expect(done.error || "").toBe("");
+    expect(done.files?.[0]).toBe(`/home/web/Music/Exports/Mix ${format}.${format}`);
+    const size = m.ccall("micfx_daw_list", "number", ["string"], ["/home/web/Music/Exports"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = (JSON.parse((m as any).UTF8ToString(size)) as { name: string; size: number }[]).find((e) => e.name === `Mix ${format}.${format}`);
+    m._free(size);
+    expect(entry?.size).toBeGreaterThan(format === "wav" ? 100_000 : 5_000);
+  });
+
+  it("cancels an export", async () => {
+    exportEvents.length = 0;
+    await daw("export", { kind: "mix", format: "wav", folder: "/home/web/Music/Exports", name: "Cancelled", overwrite: true });
+    await daw("cancelExport");
+    for (let i = 0; i < 300 && !exportEvents.some((e) => e.done); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(exportEvents.find((e) => e.done)).toBeTruthy();
+  });
+
+  it("listens to the tracks for Auto Mix on several threads", async () => {
+    // A second track with the same voice, so there's more than one to listen to.
+    await daw("importFile", { file: "/home/web/Music/voice.wav", track: -1 });
+    autoMixEvents.length = 0;
+    const started = await daw("autoMix", { action: "analyse" });
+    expect(started).toMatchObject({ ok: true });
+    for (let i = 0; i < 600 && !autoMixEvents.some((e) => e.state === "ready" || e.state === "error"); i++) await new Promise((r) => setTimeout(r, 50));
+    const ready = autoMixEvents.find((e) => e.state === "ready" || e.state === "error")!;
+    expect(ready.state).toBe("ready");
+    expect(Array.isArray(ready.moves)).toBe(true);
+    expect((ready.tracks as unknown[]).length).toBeGreaterThanOrEqual(2);
+  }, 60_000);
 
   it("sends the session and status to the page", () => {
     expect(events).toContain("dawSession");

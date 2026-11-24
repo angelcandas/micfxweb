@@ -74,7 +74,7 @@ compile_one() {
 d="$desktop/src"
 sources=(
   "$here/cpp/daw/juce_daw_modules.cpp" "$here/cpp/daw/juce_daw_modules2.cpp" "$here/cpp/daw/juce_wasm_threads.cpp" "$here/cpp/daw/juce_wasm_files.cpp"
-  "$here/cpp/daw/DawHost.cpp" "$here/cpp/daw/web_stubs.cpp"
+  "$here/cpp/daw/DawHost.cpp" "$here/cpp/daw/web_stubs.cpp" "$here/cpp/daw/WebHistory.cpp" "$here/cpp/daw/WebProject.cpp"
   "$d/PluginProcessor.cpp" "$d/DawBridge.cpp" "$d/DawActions.cpp" "$d/McpProtocol.cpp" "$d/McpServer.cpp"
   "$d/Parameters.cpp" "$d/Presets.cpp" "$d/Recorder.cpp" "$d/CaptureRing.cpp" "$d/LiveInstruments.cpp"
   "$d/Looper.cpp" "$d/MidiMap.cpp" "$d/LiveHistory.cpp" "$d/Scenes.cpp" "$d/Setlist.cpp" "$d/PresetLibrary.cpp"

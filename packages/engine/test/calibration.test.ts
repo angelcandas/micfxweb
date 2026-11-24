@@ -44,7 +44,7 @@ describe("latency calibration", () => {
   it("measures a Bluetooth-long round trip in some noise", () => {
     const { mic, clicks } = calibrate(12000, 0.05, 0.01); // 250 ms
     expect(measureRoundTrip(mic, clicks, RATE).frames).toBe(12000);
-  });
+  }, 30_000); // under a second alone, but CI runs it beside the wasm tests
 
   it("says so when the clicks aren't heard (headphones on)", () => {
     const { mic, clicks } = calibrate(2400, 0, 0.01);
