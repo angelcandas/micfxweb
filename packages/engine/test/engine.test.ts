@@ -157,4 +157,71 @@ describe("LiveEngine (desktop DSP in wasm)", () => {
     expect(share).toBeLessThan(0.5);
     engine.dispose();
   });
+
+  it("has the desktop's parameter list, ranges and defaults", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const info = engine.parameterInfo();
+    const ids = Object.keys(info);
+    expect(ids[0]).toBe("inputGain");
+    expect(ids.length).toBeGreaterThan(250);
+    expect(info.tuneKey?.choices).toHaveLength(12);
+    expect(info.hpfOn).toMatchObject({ bool: true, default: 1 });
+    expect(info.tuneSpeed).toMatchObject({ min: 0, max: 200, default: 20, label: "ms" });
+    expect(info.tuneSpeed!.skew).not.toBe(1); // centred at 40 ms, like the desktop knob
+    // The engine starts from these defaults.
+    for (const id of ["hpfOn", "compOn", "reverbOn", "tuneSpeed", "reverbMix"]) expect(engine.getValue(id)).toBeCloseTo(info[id]!.default);
+    engine.dispose();
+  });
+
+  it("has the desktop's factory presets", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const presets = engine.factoryPresets();
+    expect(presets.length).toBeGreaterThanOrEqual(24);
+    expect(presets[0]).toMatchObject({ name: "Natural", category: "Clean" });
+    expect(presets.find((p) => p.name === "Podcast")?.values.denoiseOn).toBe(1);
+    expect(new Set(presets.map((p) => p.category))).toEqual(new Set(["Clean", "Tuned", "Characters", "Lo-fi", "Space"]));
+    engine.dispose();
+  });
+
+  it("loads a preset like the desktop: defaults, its values, the input gain kept", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const presets = engine.factoryPresets();
+    engine.setValue("inputGain", 6);
+    engine.setValue("robotOn", 1);
+    expect(engine.loadPreset(presets.findIndex((p) => p.name === "Podcast"))).toBe(true);
+    expect(engine.getValue("denoiseOn")).toBe(1);
+    expect(engine.getValue("reverbOn")).toBe(0);
+    expect(engine.getValue("compRatio")).toBeCloseTo(4);
+    expect(engine.getValue("robotOn")).toBe(0); // back to its default
+    expect(engine.getValue("inputGain")).toBe(6); // the mic's, not the preset's
+    expect(engine.loadPreset(999)).toBe(false);
+    engine.dispose();
+  });
+
+  it("renders every factory preset cleanly", () => {
+    const input = voice(1, 0.5);
+    runtime.create(RATE, BLOCK).factoryPresets().forEach((preset, index) => {
+      const engine = runtime.create(RATE, BLOCK);
+      engine.loadPreset(index);
+      const { left, right } = run(engine, input);
+      expect(allFinite(left) && allFinite(right), preset.name).toBe(true);
+      expect(Math.max(peak(left), peak(right)), preset.name).toBeLessThanOrEqual(LIMIT + 0.02);
+      expect(peak(left), preset.name).toBeGreaterThan(0.005);
+      engine.dispose();
+    });
+  });
+
+  // Switching while singing: the limiter has no look-ahead, so the first moment after a big
+  // change can overshoot -1 dB (as on the desktop), but never past full scale.
+  it("switches between every preset while singing without NaN or going past full scale", () => {
+    const engine = runtime.create(RATE, BLOCK);
+    const input = voice(0.5, 0.5);
+    engine.factoryPresets().forEach((preset, index) => {
+      engine.loadPreset(index);
+      const { left, right } = run(engine, input);
+      expect(allFinite(left) && allFinite(right), preset.name).toBe(true);
+      expect(Math.max(peak(left), peak(right)), preset.name).toBeLessThanOrEqual(1);
+    });
+    engine.dispose();
+  });
 });

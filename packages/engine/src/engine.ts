@@ -10,6 +10,27 @@ export interface ValueInfo {
   isSwitch: boolean;
 }
 
+/** One desktop parameter, as the desktop's "getParameterInfo" native function describes it. */
+export interface ParameterInfo {
+  name: string;
+  min: number;
+  max: number;
+  skew: number;
+  step: number;
+  label: string;
+  default: number;
+  choices?: string[];
+  bool?: true;
+}
+
+/** A desktop factory preset: values in real units, and the effects' order (empty: standard). */
+export interface FactoryPreset {
+  name: string;
+  category: string;
+  values: Record<string, number>;
+  order: string[];
+}
+
 export interface Meters {
   /** Peak since the last read, after the input gain (linear). */
   input: number;
@@ -23,6 +44,10 @@ interface Exports {
   memory: WebAssembly.Memory;
   _initialize(): void;
   micfx_text(): number;
+  micfx_result(): number;
+  micfx_parameter_info(engine: number): number;
+  micfx_presets(): number;
+  micfx_load_preset(engine: number, index: number): number;
   micfx_create(sampleRate: number, maxBlockSize: number): number;
   micfx_destroy(engine: number): void;
   micfx_input(engine: number): number;
@@ -139,13 +164,28 @@ export class LiveEngine {
     return Number.isNaN(value) ? undefined : value;
   }
 
+  /** The desktop parameters, in the desktop's order. */
+  parameterInfo(): Record<string, ParameterInfo> {
+    return JSON.parse(this.readResult(this.x.micfx_parameter_info(this.handle))) as Record<string, ParameterInfo>;
+  }
+
+  /** The desktop's factory voice presets, in program order. */
+  factoryPresets(): FactoryPreset[] {
+    return JSON.parse(this.readResult(this.x.micfx_presets())) as FactoryPreset[];
+  }
+
+  /** Loads a factory preset as the desktop does: defaults (but the input gain), its values, its order. */
+  loadPreset(index: number): boolean {
+    return this.x.micfx_load_preset(this.handle, index) === 1;
+  }
+
   /** Every value back to its default, except the input gain (it belongs to the mic). */
   resetValues(): void {
     this.x.micfx_reset_values(this.handle);
   }
 
   valueInfo(): ValueInfo[] {
-    return this.readText(this.x.micfx_value_info(this.handle))
+    return this.readResult(this.x.micfx_value_info(this.handle))
       .split("\n")
       .filter(Boolean)
       .map((line) => {
@@ -160,7 +200,7 @@ export class LiveEngine {
   }
 
   getOrder(): string[] {
-    return this.readText(this.x.micfx_get_order(this.handle)).split(",").filter(Boolean);
+    return this.readResult(this.x.micfx_get_order(this.handle)).split(",").filter(Boolean);
   }
 
   /** Peaks since the last call, and the effects' latency. */
@@ -183,10 +223,23 @@ export class LiveEngine {
     return length;
   }
 
-  private readText(length: number): string {
-    const bytes = new Uint8Array(this.x.memory.buffer, this.x.micfx_text(), length);
+  // UTF-8, decoded by hand: some worklets have no TextDecoder.
+  private readResult(length: number): string {
+    const bytes = new Uint8Array(this.x.memory.buffer, this.x.micfx_result(), length);
+    const codes: number[] = [];
+    for (let i = 0; i < length; ) {
+      const b = bytes[i++]!;
+      if (b < 0x80) codes.push(b);
+      else if (b < 0xe0) codes.push(((b & 0x1f) << 6) | (bytes[i++]! & 0x3f));
+      else if (b < 0xf0) codes.push(((b & 0x0f) << 12) | ((bytes[i++]! & 0x3f) << 6) | (bytes[i++]! & 0x3f));
+      else {
+        const c = ((b & 0x07) << 18) | ((bytes[i++]! & 0x3f) << 12) | ((bytes[i++]! & 0x3f) << 6) | (bytes[i++]! & 0x3f);
+        codes.push(0xd800 + ((c - 0x10000) >> 10), 0xdc00 + ((c - 0x10000) & 0x3ff));
+      }
+    }
     let text = "";
-    for (let i = 0; i < length; i += 1024) text += String.fromCharCode(...bytes.subarray(i, Math.min(length, i + 1024)));
+    for (let i = 0; i < codes.length; i += 4096) text += String.fromCharCode(...codes.slice(i, i + 4096));
     return text;
   }
+
 }

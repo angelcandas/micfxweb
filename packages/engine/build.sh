@@ -5,6 +5,9 @@
 # The wasm is standalone (no Emscripten JS glue) and uses no threads, so the AudioWorklet can
 # instantiate it itself and the site needs no cross-origin isolation. Its few WASI imports are
 # stubbed by src/engine.ts.
+#
+# Parameters.cpp and Presets.cpp (the parameter list and factory presets) compile unchanged
+# against shim/juce_audio_processors, a small stand-in for the JUCE module that can't build here.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -28,7 +31,7 @@ fi
 
 flags=(
   -std=c++20 -O2 -msimd128
-  -I"$juce" -I"$desktop/src" -I"$desktop/src/dsp" -I"$desktop/src/analysis"
+  -I"$juce" -I"$here/shim" -I"$desktop/src" -I"$desktop/src/dsp" -I"$desktop/src/analysis"
   -DNDEBUG=1 -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=0
   -DJUCE_MODULE_AVAILABLE_juce_core=1 -DJUCE_MODULE_AVAILABLE_juce_audio_basics=1
   -DJUCE_MODULE_AVAILABLE_juce_audio_formats=1 -DJUCE_MODULE_AVAILABLE_juce_dsp=1
@@ -42,6 +45,8 @@ sources=(
   "$here/cpp/juce_wasm_stubs.cpp"
   "$here/cpp/LiveEngine.cpp"
   "$here/cpp/api.cpp"
+  "$desktop/src/Parameters.cpp"
+  "$desktop/src/Presets.cpp"
   "$desktop/src/analysis/Chords.cpp"
   "$desktop/src/analysis/Key.cpp"
 )
@@ -58,6 +63,6 @@ done
 
 em++ -O2 -msimd128 "${objects[@]}" -o "$out/engine.wasm" \
   -sSTANDALONE_WASM=1 --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 \
-  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_text,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters
+  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_text,_micfx_result,_micfx_parameter_info,_micfx_presets,_micfx_load_preset,_micfx_create,_micfx_destroy,_micfx_input,_micfx_output,_micfx_process,_micfx_set_value,_micfx_get_value,_micfx_reset_values,_micfx_value_info,_micfx_set_order,_micfx_get_order,_micfx_meters
 
 echo "Built $(du -h "$out/engine.wasm" | cut -f1) $out/engine.wasm"

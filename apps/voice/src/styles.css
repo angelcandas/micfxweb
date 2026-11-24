@@ -38,6 +38,25 @@ body {
 .logo { width: 36px; height: 36px; flex: none; }
 h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: 0.01em; }
 .subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+.preset-bar { display: flex; align-items: center; gap: 6px; }
+.icon-button {
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 18px; line-height: 1;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+}
+.preset-picker {
+  display: grid; padding: 4px 12px; border-radius: 12px; min-width: 190px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.preset-label { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+.preset-select {
+  font: inherit; font-weight: 600; color: var(--text); background: transparent; border: 0; padding: 0; outline-offset: 2px;
+}
+.preset-select option, .preset-select optgroup { background: var(--panel); color: var(--text); }
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; }
+  .preset-bar { order: 3; width: 100%; }
+  .preset-picker { flex: 1; }
+}
 .latency { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .latency.is-high { color: var(--warn); }
 
