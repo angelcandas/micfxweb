@@ -9,7 +9,8 @@ import type { LiveEngine } from "@micfx/engine";
 import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
-import { Tracks, decodeMono, encodeWav, download, songFiles } from "./tracks";
+import { Tracks, decodeChannels, encodeWav, download, songFiles } from "./tracks";
+import { splitVoice } from "./stems-client";
 import { Setlist } from "./setlist";
 import { SoundCheck } from "./sound-check";
 import { findMelody, pageAnalysis, soundCheckPlan } from "./analysis-client";
@@ -279,7 +280,9 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
   const practice = new Practice({
     store: opfsStore(),
     scorer: pageAnalysis,
-    decode: decodeMono,
+    decode: decodeChannels,
+    split: splitVoice,
+    encodeWav,
     findMelody,
     pickFile,
     install: async (guide, backing, level) => {

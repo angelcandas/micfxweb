@@ -35,9 +35,22 @@ jobs:
       - run: pnpm build
       - name: Install Chromium for the browser tests
         run: pnpm --filter @micfx/voice exec playwright install --with-deps chromium
+      # The stem splitter's weights (84 MB, the desktop's file), for the test that separates a song.
+      - name: Cache the stem splitter's weights
+        uses: actions/cache@v4
+        with:
+          path: ~/stems-model
+          key: stems-htdemucs-4s-f16
+      - name: Download the stem splitter's weights
+        run: |
+          mkdir -p ~/stems-model
+          [ -f ~/stems-model/model.bin ] || curl -fsSL --retry 3 -o ~/stems-model/model.bin \
+            https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin
+          echo "72b17c42d308982ddb5069bc3bf48b81a5aac4cb6516e4366c0fa7cef6df0064  $HOME/stems-model/model.bin" | sha256sum -c -
       - run: pnpm test
         env:
           CI: true
+          MICFX_STEMS_MODEL: /home/runner/stems-model/model.bin
       - name: Keep the built Voice app for the deploy
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4

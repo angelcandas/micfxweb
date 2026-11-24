@@ -82,7 +82,7 @@ A thin `LiveEngine` class, written for the web but kept free of browser code so 
 | `Presets`, `FactoryChains`, `Parameters` | ✅ Voice | Values via the shared table, applied by the wrapper instead of the APVTS |
 | `Looper`, `Recorder` | ✅ Voice, later PR | Looper's DSP as is; recording writes WAV in JS (or `juce_audio_formats` WAV writer to memory) and saves to a download/OPFS |
 | `analysis/Coach`, `Lyrics`, `Structure`, `Practice` logic | ✅ Voice, Practice phase | Analysis in a Worker; the `Practice` class's file and thread handling rewritten in TS |
-| `stems/` (demucs.cpp) | ⚠️ Practice phase | demucs.cpp already runs in wasm in other projects; minutes per song on a laptop, so it runs in a Worker with progress, caches the stems in OPFS, and "voice-only" songs skip it. A server option is a later decision |
+| `stems/` (demucs.cpp) | ✅ Practice | demucs.cpp already runs in wasm in other projects; minutes per song on a laptop, so it runs in a Worker with progress, caches the stems in OPFS, and "voice-only" songs skip it. A server option is a later decision |
 | `SoundCheck` planner, `analysis/*` | ✅ Voice | `analysis.wasm` in a Worker, built with `juce_events` and `juce_data_structures` (patched: a message queue and timers the page runs, `juce::wasmDispatchMessages`); the linker drops the DAW parts the sound check never calls |
 | `Multitrack`, `daw/*` engine, `Warp`, `Exporter`, `analysis/Mix*` | ⏳ DAW app | `daw/*`, `analysis/*` and the instruments' DSP already compile for wasm with the `juce_events` patch and the fuller shim; left: `PluginHost` (no plug-ins on the web), the instruments' editors, LAME for MP3 |
 | `instruments/*` | ⏳ DAW app | DSP should port; Web MIDI for input |
@@ -154,7 +154,7 @@ Each PR is small enough to review, has CI, and UI PRs carry screenshots.
 6. **Devices, storage, latency**: input/output pickers, user presets and UI prefs in IndexedDB, latency readout.
 7. **Record and backing track**: WAV recording to download, backing track from file, key detection in a Worker.
 8. **Deploy**: Cloudflare Pages from CI (chosen over GitHub Pages; see docs/deploy.md), PWA manifest and offline cache, link to source.
-9+. Looper, scenes/setlist, MIDI learn; then Practice (voice-only songs ✅ → stems in a Worker → coaching and lyrics).
+9+. Looper, scenes/setlist, MIDI learn; then Practice (voice-only songs ✅ → stems in Workers ✅ → coaching and lyrics).
 
 Then **MicFX DAW**: plan the `juce_events` shim (a message queue on the main thread) so `daw/*` and `Multitrack` can compile, decide where Auto Mix analysis runs (Workers, with the heavier learning parts possibly server-side), and reuse `daw.js` through the same bridge.
 
