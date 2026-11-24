@@ -674,6 +674,8 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       tracks,
       sound: () => ({ values: allValues(), defaults, order: shadow.getOrder(), defaultOrder }),
       applySound: (values: Record<string, number>, order?: string[]) => applySound(values, order ?? defaultOrder),
+      /** Playing or recording: not a moment to restart. */
+      busy: () => transport.playing || recording,
       /** Saves the session now, if a change is waiting (before a backup). */
       flush: () => {
         if (saveTimer !== undefined) saveNow();

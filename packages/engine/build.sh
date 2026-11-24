@@ -83,6 +83,22 @@ mapfile -t analysis_objects < <(compile "$work/obj-studio" studio_flags \
 link analysis.wasm _malloc,_free,_micfx_result,_micfx_styles,_micfx_sound_check,_micfx_noise_profile,_micfx_find_melody,_micfx_score_song,_micfx_score_frames,_micfx_score_restart,_micfx_score_time,_micfx_score_changes,_micfx_score_report,_micfx_lyrics_set,_micfx_lyrics_align,_micfx_lyrics_nudge,_micfx_song_sections,_micfx_score_shift,_micfx_warp_render,_micfx_warp_output,_micfx_warp_free 1048576 \
   "$work/obj/juce_modules.o" "$work/obj/juce_wasm_stubs.o" "${analysis_objects[@]}"
 
+# mp3.wasm: the desktop's MP3 encoder (LAME, LGPL: the desktop's libs/lame, plain C).
+lame="$desktop/libs/lame"
+mkdir -p "$work/obj-mp3"
+mp3_objects=()
+for src in "$lame/libmp3lame/"*.c "$here/cpp/mp3_api.c"; do
+  obj="$work/obj-mp3/$(basename "$src" .c).o"
+  if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ]; then
+    echo "  compile $(basename "$src")"
+    emcc -O2 -w -DHAVE_CONFIG_H -I"$lame" -I"$lame/include" -I"$lame/libmp3lame" -c "$src" -o "$obj"
+  fi
+  mp3_objects+=("$obj")
+done
+emcc -O2 "${mp3_objects[@]}" -o "$out/mp3.wasm" -sSTANDALONE_WASM=1 --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=16777216 \
+  -sEXPORTED_FUNCTIONS=_malloc,_free,_micfx_mp3_open,_micfx_mp3_encode,_micfx_mp3_finish,_micfx_mp3_lametag,_micfx_mp3_close
+echo "Built $(du -h "$out/mp3.wasm" | cut -f1) $out/mp3.wasm"
+
 # stems.wasm: the stem splitter network (demucs.cpp, MIT, on Eigen, MPL 2.0: the desktop's
 # libs/). Its weights are downloaded by the page, not built in.
 demucs="$desktop/libs/demucs.cpp"

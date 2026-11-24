@@ -4,6 +4,7 @@
 import { JuceBackend } from "@micfx/bridge";
 import { createShadowEngine, LiveAudio } from "./audio";
 import { createNative } from "./native";
+import { registerOffline } from "./update";
 import { addWebSettings, openSharedSound } from "./web-panels";
 import "./web.css";
 
@@ -46,7 +47,8 @@ async function boot() {
   native.started();
   openSharedSound(native.web);
   addEventListener("hashchange", () => openSharedSound(native.web));
-  registerOffline();
+  // Keeps the app's files so it opens and plays offline (production builds only).
+  if (import.meta.env.PROD) registerOffline(() => native.web.busy());
 }
 
 // MicFX is free software (AGPLv3): the page says so and offers its source, as a .zip that
@@ -69,11 +71,6 @@ function addSourceLink() {
   if (foot) foot.insertBefore(make("Source (AGPL)"), status ?? null);
 }
 
-// Keeps the app's files so it opens and plays offline (production builds only).
-function registerOffline() {
-  if (import.meta.env.PROD && "serviceWorker" in navigator)
-    navigator.serviceWorker.register("sw.js").catch((error) => console.warn("MicFX: offline mode isn't available", error));
-}
 
 const SOURCE = "source.zip";
 

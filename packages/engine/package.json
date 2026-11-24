@@ -10,9 +10,11 @@
     "./session": "./src/session.ts",
     "./analysis": "./src/analysis.ts",
     "./stems": "./src/stems.ts",
+    "./mp3": "./src/mp3.ts",
     "./engine.wasm": "./dist/engine.wasm",
     "./analysis.wasm": "./dist/analysis.wasm",
-    "./stems.wasm": "./dist/stems.wasm"
+    "./stems.wasm": "./dist/stems.wasm",
+    "./mp3.wasm": "./dist/mp3.wasm"
   },
   "scripts": {
     "build": "bash build.sh",

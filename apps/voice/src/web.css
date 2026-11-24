@@ -33,3 +33,11 @@ body[data-platform="web"] :is(
   padding: 10px 16px; border-radius: 10px; background: #23283a; color: #e9ecf4; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); font-size: 13px;
 }
 .web-toast[hidden] { display: none; }
+
+/* "A new version is ready" (update.ts). */
+.web-update {
+  position: fixed; right: 16px; bottom: 48px; z-index: 1000; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  max-width: min(520px, calc(100vw - 32px)); padding: 10px 12px 10px 16px; border-radius: 12px;
+  background: #23283a; color: #e9ecf4; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); font-size: 13px;
+}
+.web-update span { flex: 1 1 220px; }

@@ -3,6 +3,7 @@
 // 9, points 4 to 6). And a shared sound's link, opened.
 import { type StoredItem, forgetFile, formatBytes, keepFiles, makeBackup, readBackup, storageReport } from "./backup";
 import { readSoundHash, soundHash } from "./share";
+import { TAKE_FORMATS, type TakeFormat, canEncodeOpus, setTakeFormat, takeFormat } from "./take-format";
 import type { Tracks } from "./tracks";
 import { download } from "./tracks";
 
@@ -74,6 +75,25 @@ export function addWebSettings(hooks: WebHooks) {
     parent.append(element);
     return element;
   };
+
+  // The take's file, in the desktop's Recording section.
+  const recording = [...body.querySelectorAll("h3")].find((h) => h.textContent === "Recording")?.parentElement;
+  if (recording) {
+    const select = html("select", "dropdown web-take-format");
+    select.setAttribute("aria-label", "Take file format");
+    for (const { id, label } of TAKE_FORMATS) select.append(new Option(label, id));
+    select.value = takeFormat();
+    select.addEventListener("change", () => setTakeFormat(select.value as TakeFormat));
+    void canEncodeOpus().then((ok) => {
+      const opus = select.querySelector<HTMLOptionElement>('option[value="opus"]');
+      if (ok || !opus) return;
+      opus.disabled = true;
+      opus.textContent += " (not in this browser)";
+      if (select.value === "opus") select.value = "wav";
+    });
+    const line = row(recording, "Take files", select);
+    line.title = "What \"Show\" on a take downloads. Takes are kept as WAV in the browser either way.";
+  }
 
   // Share
   const share = section("Share this sound", "web-share");

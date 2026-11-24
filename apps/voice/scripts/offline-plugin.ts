@@ -40,8 +40,15 @@ function serviceWorker(version: string, files: string[]): string {
 const CACHE = "micfx-voice-${version}";
 const FILES = ${JSON.stringify(files)};
 
+// A new version is cached in the background and waits: it starts when MicFX is next opened
+// (every MicFX tab closed), or at once when the page asks ("Restart now"). So a song never
+// switches versions halfway through.
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "start-new-version") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -52,16 +59,18 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// The page itself: the network first (a new version shows at once), the cache when offline.
-// Everything else: the cache first (the files have content hashes or change with a version).
+// Everything, the page included, comes from this version's cache (so the page and its files
+// always match), and from the network for anything the cache doesn't hold.
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("./", { ignoreSearch: true })));
+    const path = new URL(request.url).pathname;
+    const scope = new URL(self.registration.scope).pathname;
+    if (path === scope || path === scope + "index.html") event.respondWith(caches.open(CACHE).then((cache) => cache.match("./")).then((hit) => hit ?? fetch(request)));
     return;
   }
-  event.respondWith(caches.match(request, { ignoreSearch: true }).then((hit) => hit ?? fetch(request)));
+  event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((hit) => hit ?? fetch(request)));
 });
 `;
 }
