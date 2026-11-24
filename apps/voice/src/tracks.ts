@@ -5,9 +5,11 @@ import type { KeyEstimate } from "@micfx/engine";
 import type { LiveAudio, RecordedTake } from "./audio";
 import { compileEngine } from "./audio";
 import KeyWorker from "./key-worker?worker";
+import type { SongFiles } from "./setlist";
 
 const DB_NAME = "micfx-voice";
 const STORE = "tracks";
+const SONG_FILES = "songFiles"; // the setlist's backing tracks, by id
 const PEAK_SECONDS = 0.02; // as the desktop's Multitrack
 const MAX_MINUTES = 30;
 const DECODE_RATE = 48000; // before the audio starts; decoded again at the device's rate
@@ -182,6 +184,23 @@ export class Tracks {
     this.onChanged();
   }
 
+  /** The backing song playing now (the first track that isn't a take). */
+  currentBacking(): { name: string; file: Blob } | undefined {
+    const song = this.tracks.find((t) => !t.isTake);
+    return song && { name: song.fileName, file: song.audio };
+  }
+
+  /**
+   * A setlist song's backing track (or none) takes the place of the last one. The takes
+   * stay (they are only in this browser) but go quiet, as they belonged to the last song.
+   */
+  async replaceBacking(file: (Blob & { name: string }) | undefined): Promise<void> {
+    for (const song of this.tracks.filter((t) => !t.isTake)) await this.remove(song.id);
+    for (const take of this.tracks) if (!take.muted) this.set(take.id, { muted: true });
+    if (file) await this.addBackingTrack(file);
+    else this.onChanged();
+  }
+
   /** Downloads the last take (and its dry file). False when there is none. */
   downloadLastTake(): boolean {
     const take = this.lastTake ?? [...this.tracks].reverse().find((t) => t.isTake);
@@ -258,11 +277,36 @@ export class Tracks {
   }
 }
 
+/** The setlist's song files, kept in the same database. */
+export function songFiles(): SongFiles {
+  const db = openDb();
+  const store = async (mode: IDBTransactionMode) => (await db)?.transaction(SONG_FILES, mode).objectStore(SONG_FILES);
+  return {
+    async put(id, file) {
+      const s = await store("readwrite");
+      if (s) await done(s.put(file, id));
+    },
+    async get(id) {
+      const s = await store("readonly");
+      return s ? ((await request(s.get(id))) as Blob | undefined) : undefined;
+    },
+    async prune(keep) {
+      const s = await store("readwrite");
+      if (!s) return;
+      for (const key of await request(s.getAllKeys())) if (!keep.has(String(key))) s.delete(key);
+    },
+  };
+}
+
 function openDb(): Promise<IDBDatabase | undefined> {
   return new Promise((resolve) => {
     try {
-      const open = indexedDB.open(DB_NAME, 1);
-      open.onupgradeneeded = () => open.result.createObjectStore(STORE, { keyPath: "id" });
+      const open = indexedDB.open(DB_NAME, 2);
+      open.onupgradeneeded = () => {
+        const names = open.result.objectStoreNames;
+        if (!names.contains(STORE)) open.result.createObjectStore(STORE, { keyPath: "id" });
+        if (!names.contains(SONG_FILES)) open.result.createObjectStore(SONG_FILES);
+      };
       open.onsuccess = () => resolve(open.result);
       open.onerror = () => resolve(undefined);
     } catch {

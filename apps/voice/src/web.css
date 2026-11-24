@@ -10,7 +10,8 @@ body[data-platform="web"] :is(
   .record-change,          /* takes stay in the browser; "Show" downloads them */
   .capture,
   .computer-audio,         /* the computer's own sound */
-  .open-in-daw
+  .open-in-daw,
+  .setlist-recent          /* no file paths in a browser: Open… picks the file */
 ) {
   display: none !important;
 }
