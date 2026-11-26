@@ -21,6 +21,7 @@ import { MidiMap, connectMidi, midiAlreadyAllowed, type Mapping } from "./midi-m
 import { TabAudio, gainOf, mixBacking } from "./tab-audio";
 import { MIC_DENIED_EVENT, micHelp } from "./mic-help";
 import { takeOffered } from "./offered";
+import { PHONE_QUERY } from "./phone";
 
 const MANUAL = "https://github.com/angelcandas/local-mic-effects/blob/main/docs/manual/user-manual.md";
 const PREF_PREFIX = "micfx.ui.";
@@ -543,7 +544,13 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       const name = PREF_PREFIX + String(key).replace(/[^A-Za-z0-9._-]/g, "");
       const store = storage();
       if (value !== undefined) store?.setItem(name, String(value).slice(0, 20000));
-      return store?.getItem(name) ?? "";
+      const saved = store?.getItem(name) ?? "";
+      // Phones skip the desktop's welcome card: Capture asks for the mic when it's needed.
+      if (!saved && matchMedia(PHONE_QUERY).matches) {
+        if (key === "firstRunDone") return "1";
+        if (key === "changelogSeen") return "999999"; // nor the "what's new" window on the first open
+      }
+      return saved;
     },
 
     liveControl: (action: string, on?: boolean) => {

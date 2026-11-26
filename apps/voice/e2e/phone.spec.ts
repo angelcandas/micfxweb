@@ -12,8 +12,9 @@ test("the Live view fits a phone, and effects come from a sheet", async ({ page 
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByRole("button", { name: "I'm wearing headphones" }).click();
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".recorder .record-button").waitFor();
+  // No desktop welcome card on a phone.
+  await expect(page.locator(".setup-backdrop:not([hidden])")).toHaveCount(0);
   expect(await sideways(page)).toBeLessThanOrEqual(0);
 
   const sheet = page.locator("nav.sidebar");
@@ -39,9 +40,35 @@ test("the Live view fits a phone, and effects come from a sheet", async ({ page 
 test("a tablet keeps the Looper and Practice buttons", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto("/");
+  await page.locator(".recorder .record-button").waitFor();
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.locator(".chip.practice-toggle")).toBeVisible();
   await expect(page.locator(".chip.loop-toggle").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Effects", exact: true })).toBeHidden();
+  expect(await sideways(page)).toBeLessThanOrEqual(0);
+});
+
+test("phone: touch-sized controls, a record bar that stays in view, no desktop-only controls", async ({ page }) => {
+  await page.goto("/");
+  const record = page.locator(".recorder .record-button");
+  await record.waitFor();
+  await page.waitForTimeout(500);
+  const small = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>("button, select")]
+      .filter((el) => el.offsetParent && !el.closest("nav.sidebar"))
+      .map((el) => [el.className, Math.round(el.getBoundingClientRect().height)] as const)
+      .filter(([, h]) => h < 44),
+  );
+  expect(small).toEqual([]);
+  // The record bar is on screen without scrolling, and still is after scrolling down.
+  const inView = async () => record.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; });
+  expect(await inView()).toBe(true);
+  await page.evaluate(() => scrollTo(0, document.body.scrollHeight));
+  expect(await inView()).toBe(true);
+  for (const hidden of [".web-video-button", ".computer-audio", ".midi-button"]) await expect(page.locator(hidden).first()).toBeHidden();
+  // "More" opens the rest of the recorder.
+  await expect(page.locator(".recorder .add-track")).toBeHidden();
+  await page.getByRole("button", { name: "More" }).click();
+  await expect(page.locator(".recorder .add-track")).toBeVisible();
   expect(await sideways(page)).toBeLessThanOrEqual(0);
 });
