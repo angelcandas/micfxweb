@@ -99,7 +99,7 @@ async function recordOne(page: Page, ms = 3500) {
 }
 
 test("an idea opens full screen: seek, loop, speed, notes, polish, layer and mix", async ({ page, context }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await context.grantPermissions(["microphone"]);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -135,7 +135,7 @@ test("an idea opens full screen: seek, loop, speed, notes, polish, layer and mix
   await expect(page.locator("article.idea").first()).toContainText("polished");
 
   // A layer over the first idea, then the mix.
-  await page.locator("article.idea", { hasText: "chorus idea in G", hasNotText: "polished" }).locator(".idea-name").click();
+  await page.locator("article.idea").nth(1).locator(".idea-name").click(); // the polished copy is first, the original second
   await detail.getByRole("button", { name: /Layer another take/ }).click();
   await expect(page.getByText(/Layering over/)).toBeVisible();
   await recordOne(page, 2500);

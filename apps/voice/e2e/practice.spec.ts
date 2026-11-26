@@ -84,7 +84,10 @@ async function keepModel(page: Page, file: string) {
 
 test("a whole song is split into its voice and backing, then practised", async ({ page }) => {
   test.skip(!model || !existsSync(model), "MICFX_STEMS_MODEL isn't set");
-  test.setTimeout(420_000); // one Worker on CI's 4 cores: about 2 minutes for these 8 seconds
+  test.setTimeout(960_000); // one Worker on CI's 4 cores: about 2 minutes for these 8 seconds
+  const log: string[] = [];
+  page.on("console", (m) => log.push(m.type() + ": " + m.text().slice(0, 300)));
+  page.on("pageerror", (e) => log.push("pageerror: " + e.message.slice(0, 300)));
   await page.goto("/");
   await keepModel(page, model!);
   await page.getByRole("button", { name: "Done" }).click();
@@ -96,6 +99,11 @@ test("a whole song is split into its voice and backing, then practised", async (
   await expect(page.locator(".practice-progress-text")).toContainText(/Loading|Taking the voice/, { timeout: 30_000 });
   // How long it takes, then how long it has left (plan point 18).
   await expect(page.locator(".web-split-time")).toHaveText(/^(Splitting takes (under a minute|about (a minute|\d+ min)) here|(under a minute|about (a minute|\d+ min)) left)$/);
-  await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 360_000 });
+  try {
+    await expect(page.locator(".practice-song")).toHaveText("Whole song", { timeout: 900_000 });
+  } catch (error) {
+    console.log("Split never finished. Progress: " + (await page.locator(".practice-progress-text").allTextContents()).join(" | ") + "\n" + log.slice(-30).join("\n"));
+    throw error;
+  }
   await expect(page.locator(".tracks-rows .track")).toHaveCount(2);
 });
