@@ -7,6 +7,9 @@ const voice = fileURLToPath(new URL("./e2e/voice.wav", import.meta.url));
 export default defineConfig({
   testDir: "e2e",
   timeout: 30_000,
+  // One at a time on CI: the whole-song split (Practice) needs the runner's cores, and the Capture tests
+  // (analysis, polish, key finding) running beside it pushed it past its time.
+  workers: process.env.CI ? 1 : undefined,
   use: {
     baseURL: "http://localhost:4173",
     trace: "off",
