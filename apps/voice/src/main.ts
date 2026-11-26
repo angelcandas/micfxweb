@@ -12,7 +12,7 @@ import { addDragAndDrop } from "./drop";
 import { addSendToDaw, takeFromDaw } from "./handoff";
 import { addLanguage } from "./i18n";
 import { addMicHelp } from "./mic-help";
-import { addPhoneLayout, addTransportMore } from "./phone";
+import { addCaptureLink, addPhoneLayout, addTransportMore } from "./phone";
 import { addPracticeProgress } from "./practice-progress";
 import { addPracticeTools } from "./practice-tools";
 import { addTabAudioNote } from "./tab-audio";
@@ -78,6 +78,7 @@ async function boot() {
   addAccessibility();
   addPhoneLayout();
   addTransportMore();
+  addCaptureLink();
   addPracticeProgress(native.web.practice);
   addPracticeTools(native.web.practice, native.web.startAudio);
   addLanguage();

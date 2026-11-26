@@ -30,7 +30,7 @@ function showPhonePage() {
     <h1>MicFX DAW needs a bigger screen</h1>
     <p>Arranging, editing and mixing a song takes room and a mouse or a pen. Open this page on a computer or a tablet held sideways.</p>
     <p>On your phone, <strong>catch the idea</strong> in MicFX Voice. It saves every recording on this device, and you can send it here later.</p>
-    <a class="web-phone-primary" href="${voice}">Open MicFX Voice</a>
+    <a class="web-phone-primary" href="${voice}capture.html">Record an idea</a>
     <a class="web-phone-secondary" href="?desktop">Open the DAW anyway</a>
   </main>`;
   document.title = "MicFX DAW";

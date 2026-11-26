@@ -57,3 +57,11 @@ export function addTransportMore() {
   });
   transport.append(more);
 }
+
+/** Phones: a way back to Capture from the Live screen. */
+export function addCaptureLink() {
+  const chips = document.querySelector(".topbar .chips");
+  if (!chips || chips.querySelector(".web-capture-link")) return;
+  const link = Object.assign(document.createElement("a"), { className: "chip web-capture-link", href: "capture.html", textContent: "Capture", title: "Record an idea in one tap" });
+  chips.prepend(link);
+}

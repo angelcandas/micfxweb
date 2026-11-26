@@ -68,6 +68,8 @@ self.addEventListener("fetch", (event) => {
     const path = new URL(request.url).pathname;
     const scope = new URL(self.registration.scope).pathname;
     if (path === scope || path === scope + "index.html") event.respondWith(caches.open(CACHE).then((cache) => cache.match("./")).then((hit) => hit ?? fetch(request)));
+    // The other pages of the build (Capture): from the cache too, so they open offline.
+    else if (path.startsWith(scope) && path.endsWith(".html")) event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((hit) => hit ?? fetch(request)));
     return;
   }
   event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((hit) => hit ?? fetch(request)));

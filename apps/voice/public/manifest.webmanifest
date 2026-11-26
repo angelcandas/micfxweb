@@ -7,6 +7,10 @@
   "display": "standalone",
   "background_color": "#0b0d12",
   "theme_color": "#0b0d12",
+  "shortcuts": [
+    { "name": "New recording", "short_name": "Record", "description": "Start recording an idea", "url": "capture.html?record=1", "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "My ideas", "short_name": "Ideas", "url": "capture.html#ideas", "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ],
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
