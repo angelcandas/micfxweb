@@ -42,3 +42,18 @@ export function addPhoneLayout() {
     if (!event.matches) show(false);
   });
 }
+
+/** Phones: the recorder is a bar at the bottom (Record, time); "More" opens the rest of it. */
+export function addTransportMore() {
+  const transport = document.querySelector<HTMLElement>(".recorder .transport");
+  if (!transport || transport.querySelector(".web-transport-more")) return;
+  const more = Object.assign(document.createElement("button"), { type: "button", className: "tool web-transport-more", textContent: "More" });
+  more.setAttribute("aria-expanded", "false");
+  more.title = "Backing track, click, dry mic and more";
+  more.addEventListener("click", () => {
+    const open = document.body.classList.toggle("web-transport-open");
+    more.setAttribute("aria-expanded", String(open));
+    more.textContent = open ? "Less" : "More";
+  });
+  transport.append(more);
+}

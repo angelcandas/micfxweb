@@ -69,3 +69,11 @@ body[data-web-app="daw"] .app-project { max-width: min(560px, 50vw); }
 .web-audio-row input[type="checkbox"] { justify-self: start; }
 .web-audio-delay { color: var(--text, #e9ecf4); font-weight: 600; }
 .web-audio-parts { font-variant-numeric: tabular-nums; }
+
+/* A phone: a page that points to MicFX Voice (main.ts). */
+.web-phone-page { box-sizing: border-box; min-height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 24px 24px calc(24px + env(safe-area-inset-bottom)); max-width: 480px; margin: 0 auto; font-size: 17px; line-height: 1.45; }
+.web-phone-page h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+.web-phone-page p { margin: 0; color: #aab2c5; }
+.web-phone-page a { display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 14px; text-decoration: none; font-weight: 600; }
+.web-phone-primary { background: #7b6cff; color: #fff; }
+.web-phone-secondary { color: #aab2c5; border: 1px solid #343b50; }

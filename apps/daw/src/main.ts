@@ -7,6 +7,7 @@ import { DawEngine } from "./engine";
 import { connectSavedInputs, showInputs } from "./inputs";
 import { showMidiDevices, WebMidi } from "./midi";
 import { sendMixToVoice, takeInbox } from "./partner";
+import { partnerUrl } from "@micfx/handoff";
 import { addAutosaveStatus, flushOnHide } from "./versions";
 import { showAudioSettings } from "./audio-settings";
 import "./web.css";
@@ -18,7 +19,25 @@ const MANUAL = "https://github.com/angelcandas/local-mic-effects#readme";
 // Native functions answered by the engine (DawHost.cpp's Host::call).
 const ENGINE_FUNCTIONS = ["daw", "getParameterDefaults", "getParameterInfo", "getPresets", "uiPref", "library", "loadPreset", "midi"];
 
+// A phone has no room for the DAW (the desktop's tracks, clips and menus need a pointer and a
+// wide screen): it gets a short page that points to MicFX Voice, where ideas are captured.
+// "?desktop" opens the DAW anyway.
+const PHONE = matchMedia("(max-width: 760px) and (pointer: coarse)").matches && !location.search.includes("desktop");
+
+function showPhonePage() {
+  const voice = partnerUrl("daw", location).replace(/handoff\.html$/, "");
+  document.body.innerHTML = `<main class="web-phone-page">
+    <h1>MicFX DAW needs a bigger screen</h1>
+    <p>Arranging, editing and mixing a song takes room and a mouse or a pen. Open this page on a computer or a tablet held sideways.</p>
+    <p>On your phone, <strong>catch the idea</strong> in MicFX Voice. It saves every recording on this device, and you can send it here later.</p>
+    <a class="web-phone-primary" href="${voice}">Open MicFX Voice</a>
+    <a class="web-phone-secondary" href="?desktop">Open the DAW anyway</a>
+  </main>`;
+  document.title = "MicFX DAW";
+}
+
 async function boot() {
+  if (PHONE) return showPhonePage();
   if (!crossOriginIsolated) throw new Error("This page needs cross-origin isolation (the DAW engine runs on threads).");
 
   const engine = new DawEngine();
