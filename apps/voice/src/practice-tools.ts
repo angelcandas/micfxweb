@@ -277,7 +277,7 @@ export function durationText(seconds: number): string {
 }
 
 function addSplitTime(host: PracticeToolsHost) {
-  const text = document.querySelector(".practice-progress-text");
+  const text = document.querySelector(".practice-overlay-info");
   if (!text || document.querySelector(".web-split-time")) return;
   const time = html("span", "web-split-time", "");
   text.after(time);

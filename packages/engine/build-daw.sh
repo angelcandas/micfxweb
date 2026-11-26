@@ -79,7 +79,7 @@ sources=(
   "$d/Parameters.cpp" "$d/Presets.cpp" "$d/Recorder.cpp" "$d/CaptureRing.cpp" "$d/LiveInstruments.cpp"
   "$d/Looper.cpp" "$d/MidiMap.cpp" "$d/LiveHistory.cpp" "$d/Scenes.cpp" "$d/Setlist.cpp" "$d/PresetLibrary.cpp"
   "$d/FactoryChains.cpp" "$d/SoundCheck.cpp" "$d/Multitrack.cpp" "$d/StarterContent.cpp"
-  "$d/Practice.cpp" "$d/PracticeShift.cpp" "$d/ComputerAudio.cpp"
+  "$d/Practice.cpp" "$d/PracticeShift.cpp" "$d/ComputerAudio.cpp" "$d/MidiClock.cpp"
   "$d/stems/StemSplitter.cpp"
 )
 for f in "$d"/daw/*.cpp; do
