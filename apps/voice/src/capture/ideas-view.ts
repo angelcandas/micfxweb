@@ -1,5 +1,6 @@
 import { drawBars, el, formatTime, sheet, toast } from "./dom";
 import { shareIdea } from "./actions";
+import { importFiles, isPhone, sendToDaw, shareZip } from "./transfer";
 import { openDetail } from "./detail-view";
 import { deleteIdea, listIdeas, readAudio, saveIdea, type Idea } from "./store";
 
@@ -11,10 +12,25 @@ export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): 
   const search = el("input", { type: "search", class: "search", placeholder: "Search ideas", "aria-label": "Search ideas", oninput: () => render() });
   const filters = el("div", { class: "filters", role: "group", "aria-label": "Filter" });
   const list = el("div", { class: "idea-list", style: "display:flex;flex-direction:column;gap:10px" });
-  root.append(el("div", { class: "ideas-tools" }, search, filters), list);
+  const picker = el("input", { type: "file", accept: "audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac", multiple: true, hidden: true, onchange: async () => {
+    const files = [...(picker.files ?? [])];
+    picker.value = "";
+    if (!files.length) return;
+    toast(`Adding ${files.length} file${files.length > 1 ? "s" : ""}…`, undefined, 4000);
+    const { added, failed } = await importFiles(files);
+    await reload();
+    toast(failed.length ? `Couldn't read ${failed.join(", ")}.` : `Added ${added.length} idea${added.length > 1 ? "s" : ""}.`);
+  } });
+  const addAudio = el("button", { type: "button", class: "chip", onclick: () => picker.click() }, "Add audio");
+  const selectToggle = el("button", { type: "button", class: "chip", "aria-pressed": "false", onclick: () => setSelecting(!selecting) }, "Select");
+  const bar = el("div", { class: "select-bar", hidden: true });
+  filters.append(addAudio, selectToggle);
+  root.append(el("div", { class: "ideas-tools" }, search, filters, picker), list, bar);
 
   let ideas: Idea[] = [];
   let filter: Filter = "all";
+  let selecting = false;
+  const picked = new Set<string>();
   let playing: { id: string; audio: HTMLAudioElement; url: string } | undefined;
 
   for (const [id, label] of [["all", "All"], ["starred", "Starred"], ["today", "Today"]] as const) {
@@ -24,6 +40,28 @@ export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): 
       render();
     } }, label);
     filters.append(chip);
+  }
+
+  function setSelecting(on: boolean) {
+    selecting = on;
+    picked.clear();
+    selectToggle.setAttribute("aria-pressed", String(on));
+    selectToggle.textContent = on ? "Done" : "Select";
+    render();
+  }
+
+  function renderBar() {
+    bar.hidden = !selecting;
+    if (!selecting) return;
+    const chosen = ideas.filter((i) => picked.has(i.id));
+    const off = chosen.length === 0;
+    bar.replaceChildren(
+      ...[el("span", {}, off ? "Pick ideas" : `${chosen.length} picked`),
+      isPhone() ? null : el("button", { type: "button", class: "chip", disabled: off, onclick: async () => {
+        const answer = await sendToDaw(chosen);
+        toast(answer.message ?? (answer.ok ? "Sent to MicFX DAW." : "MicFX DAW didn't take them."));
+      } }, "Send to DAW"),
+      el("button", { type: "button", class: "chip", disabled: off, onclick: () => void shareZip(chosen) }, isPhone() ? "Save for the computer" : "Save files")].filter((n): n is HTMLElement => n !== null));
   }
 
   async function reload() {
@@ -115,6 +153,10 @@ export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): 
     requestAnimationFrame(() => drawBars(canvas, idea.peaks, { played: isPlaying ? playing!.audio.currentTime / Math.max(0.1, idea.length) : undefined }));
     const date = new Date(idea.created).toLocaleDateString(undefined, { day: "numeric", month: "short" });
     return el("article", { class: `idea${isPlaying ? " is-playing" : ""}`, "data-id": idea.id },
+      selecting ? el("input", { type: "checkbox", class: "idea-check", "aria-label": `Pick ${idea.name}`, checked: picked.has(idea.id), onchange: (event: Event) => {
+        if ((event.currentTarget as HTMLInputElement).checked) picked.add(idea.id); else picked.delete(idea.id);
+        renderBar();
+      } }) : null,
       el("button", { type: "button", class: "idea-play", "aria-label": `${isPlaying && !playing!.audio.paused ? "Pause" : "Play"} ${idea.name}`, onclick: () => void toggle(idea) }, isPlaying && !playing!.audio.paused ? "❚❚" : "▶"),
       el("div", { class: "idea-body" },
         el("button", { type: "button", class: "idea-name", onclick: () => open(idea) }, `${idea.starred ? "★ " : ""}${idea.name}`),
@@ -130,6 +172,7 @@ export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): 
 
   function render() {
     const shown = visible();
+    renderBar();
     list.replaceChildren(...shown.map(card));
     if (!ideas.length) {
       list.replaceChildren(el("div", { class: "empty" }, el("div", {}, "Your ideas will be here. Catch the first one."), el("button", { type: "button", class: "chip", onclick: openRecord }, "Record")));

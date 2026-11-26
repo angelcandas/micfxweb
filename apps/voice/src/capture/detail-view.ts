@@ -6,6 +6,7 @@ import { saveSamples, mixDown, resample } from "./make-idea";
 import { notesToMidi, parseMelody, type Note } from "./midi";
 import PolishWorker from "./polish-worker?worker";
 import type { PolishReply } from "./polish-worker";
+import { isPhone, sendToDaw, shareZip } from "./transfer";
 import { getIdea, readAudio, saveIdea, type Idea } from "./store";
 import { readSamples } from "./wav";
 
@@ -220,7 +221,8 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
         idea.parent ? action("Mix with the idea underneath", "Makes one new idea out of the two", () => void mixWithParent()) : null,
         action("Make it sound good", "Clean-up, level and a touch of room, as a new copy", () => void polish()),
         action("Turn the melody into notes", "Hum a tune, get notes and a MIDI file", () => void findNotes()),
-        action("Share or save the audio", "WAV file", () => void shareIdea(idea)),
+        isPhone() ? null : action("Send to MicFX DAW", "Opens the DAW with this as a track", () => void sendToDaw([idea]).then((a) => toast(a.message ?? (a.ok ? "Sent to MicFX DAW." : "MicFX DAW didn't take it.")))),
+        action(isPhone() ? "Save for the computer" : "Share or save the audio", isPhone() ? "Share the file by AirDrop, Files or a cable, then open it in MicFX DAW" : "WAV file", () => void shareZip([idea])),
         action("Delete", "You can undo for a few seconds", () => { close(); hooks.remove(idea); }, true))));
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
   document.body.append(dialog);

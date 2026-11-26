@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
 
 // Capture (mobile plan, phase 1): open, tap, record; the take is safe as it's recorded.
@@ -146,4 +147,35 @@ test("an idea opens full screen: seek, loop, speed, notes, polish, layer and mix
   await detail.getByRole("button", { name: "Back" }).click();
   await expect(page.locator("article.idea")).toHaveCount(4);
   expect(errors).toEqual([]);
+});
+
+test("audio comes in from files, and ideas go out as files for a computer", async ({ page, context }) => {
+  await context.grantPermissions(["microphone"]);
+  await ready(page);
+  await recordOne(page, 2500);
+  await page.getByRole("tab", { name: /Ideas/ }).click();
+  // Add audio from a file (a voice memo, a bounce).
+  await page.locator('input[type="file"]').setInputFiles(fileURLToPath(new URL("./voice.wav", import.meta.url)));
+  await expect(page.locator("article.idea")).toHaveCount(2, { timeout: 20_000 });
+  // Select both, and save them for the computer: one .zip.
+  await page.getByRole("button", { name: "Select" }).click();
+  await expect(page.getByRole("button", { name: "Send to DAW" })).toHaveCount(0); // a phone has no room for it
+  for (const box of await page.locator(".idea-check").all()) await box.check();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Save for the computer" }).click();
+  expect((await download).suggestedFilename()).toMatch(/^MicFX ideas .*\.zip$/);
+});
+
+test("audio shared from another app lands in Ideas (the share target)", async ({ page, context }) => {
+  await context.grantPermissions(["microphone"]);
+  await ready(page);
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await page.reload(); // now the service worker has the page
+  const final = await page.evaluate(async () => {
+    const wav = new Uint8Array(44 + 9600);
+    const form = new FormData();
+    form.append("audio", new File([wav], "memo.wav", { type: "audio/wav" }));
+    return (await fetch("./share-target", { method: "POST", body: form })).url;
+  });
+  expect(final).toContain("capture.html?shared=1");
 });

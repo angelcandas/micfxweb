@@ -7,6 +7,8 @@ import { CaptureRecorder } from "./recorder";
 import { recordView } from "./record-view";
 import { openSettings, loadSettings } from "./settings";
 import { recoverIdeas } from "./store";
+import { importFiles, takeShared } from "./transfer";
+import { toast } from "./dom";
 import "./capture.css";
 
 const recorder = new CaptureRecorder();
@@ -60,6 +62,14 @@ document.addEventListener("visibilitychange", () => {
 void (async () => {
   await recoverIdeas().catch(() => {});
   show(location.hash === "#ideas" ? "ideas" : "record");
+  // Audio shared to MicFX from another app.
+  if (params.has("shared")) {
+    const files = await takeShared().catch(() => []);
+    const { added, failed } = await importFiles(files);
+    history.replaceState(null, "", location.pathname);
+    show("ideas");
+    toast(failed.length ? `Couldn't read ${failed.join(", ")}.` : `Added ${added.length} shared idea${added.length === 1 ? "" : "s"}.`);
+  }
   await arm();
   // From the home-screen shortcut: record at once (where the browser lets audio start).
   if (params.get("record") === "1") {
