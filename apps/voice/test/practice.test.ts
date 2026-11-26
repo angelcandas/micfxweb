@@ -307,11 +307,33 @@ describe("practice", () => {
     expect(back.song.edited).toBe(false);
   });
 
-  it("answers the take review as not available here", async () => {
+  it("keeps each whole pass for the take review: its pitch and what it scored", async () => {
     const t = setup();
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
     expect(await t.practice.handle("takes")).toEqual([]);
     t.events.length = 0;
     await t.practice.handle("review", { id: 1 });
     expect(t.events[0]![1]).toMatchObject({ state: "review", review: null });
+
+    // Sing a few seconds, then stop: a pass.
+    await t.practice.handle("view", { open: true });
+    (await t.host.scorer()).scoreReport = () => ({ score: 80, lean: -4, scored: 1, total: 1 });
+    const pitch = (seconds: number[], midi: number) => Float64Array.from(seconds.flatMap((s) => [s * 44100, midi, -20]));
+    t.practice.tick(pitch([0.5, 0.6, 0.7, 0.8], 60), { position: 0.9, playing: true }, 44100);
+    t.practice.tick(undefined, { position: 0.9, playing: false }, 44100);
+    const takes = (await t.practice.handle("takes")) as any[];
+    expect(takes).toMatchObject([{ id: 1, name: "Recording 1", speed: 1, semitones: 0, muted: false }]);
+
+    t.events.length = 0;
+    await t.practice.handle("review", { id: 1 });
+    expect(t.events[0]![1].review).toMatchObject({ take: 1, name: "Recording 1", notes: [0, 1, 60, 0, 1, 2, 62, 0], score: 80 });
+    expect(t.events[0]![1].review.frames.length).toBeGreaterThanOrEqual(4);
+
+    // Kept: the same song opened again has it.
+    const reload = new Practice(t.host);
+    await reload.restore();
+    expect(((await reload.handle("takes")) as any[]).length).toBe(1);
   });
 });

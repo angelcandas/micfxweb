@@ -176,6 +176,8 @@ export class Practice {
   private trail: number[] = [];
   /** The part sung: the melody, or a harmony a third above or below it (duet mode). */
   private part: Part = "lead";
+  /** The passes sung on this song, newest last, for the take review. */
+  private takes: Take[] = [];
   /** The reusable cues (null: the defaults, until one is saved). */
   private labelLibrary: Label[] | null = null;
   /** Who hears each pitch reading (the range finder): MIDI, 0 where none. */
@@ -315,10 +317,15 @@ export class Practice {
       case "resetMelody":
         return this.resetMelody();
       case "takes":
-        // (what was sung isn't kept in the browser: the take review is on the desktop)
-        return [];
-      case "review":
-        this.host.emit("practice", { state: "review", review: null, error: "Reviewing a recording isn't in the browser version yet." });
+        return this.takes.map(({ id, name, start, seconds, speed, semitones }) => ({ id, name, start, seconds, speed, semitones, muted: false }));
+      case "review": {
+        // (the pitch you sang, kept with the scores it earned: no recording is kept in the browser)
+        const take = this.takes.find((t) => t.id === Number(options.id)) ?? this.takes.at(-1);
+        if (!take) this.host.emit("practice", { state: "review", review: null, error: "Sing the song through first, then review it here." });
+        else this.host.emit("practice", { state: "review", review: reviewOf(take) });
+        return null;
+      }
+      case "stopReview":
         return null;
       case "sections":
         void this.findSections();
@@ -777,6 +784,7 @@ export class Practice {
     this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections, annotations, edited };
     this.trail = [];
     this.passes = parsePasses(await (await this.host.store.read(folder, historyFile(part)))?.text().catch(() => undefined));
+    this.takes = parseTakes(await (await this.host.store.read(folder, takesFile(part)))?.text().catch(() => undefined));
     this.shift = { speed: 1, semitones: 0 };
     this.pending = undefined;
     this.shiftToken++;
@@ -863,6 +871,37 @@ export class Practice {
     if (!current || !pass) return;
     this.passes = addPass(this.passes, pass);
     void this.host.store.write(current.folder, historyFile(this.part), JSON.stringify(this.passes)).catch(() => {});
+    this.keepTake(pass, report);
+  }
+
+  /** The pass kept for the take review: its pitch, the notes it was sung against and their scores. */
+  private keepTake(pass: Pass, report: Record<string, unknown>) {
+    const current = this.current;
+    const scores = this.scorer?.scoreChanges(true);
+    if (!current || !scores || this.trail.length < 4) return;
+    const first = this.trail[0]!;
+    const last = this.trail.at(-2)!;
+    const id = (this.takes.at(-1)?.id ?? 0) + 1;
+    const take: Take = {
+      id,
+      name: `Recording ${id}`,
+      at: pass.at,
+      start: round3(first),
+      seconds: round3(last - first),
+      speed: this.shift.speed,
+      semitones: this.shift.semitones,
+      notes: [...current.song.notes],
+      phrases: [...current.song.phrases],
+      frames: [...this.trail],
+      score: pass.score,
+      lean: typeof report.lean === "number" ? report.lean : 0,
+      noteScores: scores.notes,
+      phraseScores: scores.phrases,
+      lowest: current.song.lowest,
+      highest: current.song.highest,
+    };
+    this.takes = [...this.takes, take].slice(-MAX_TAKES);
+    void this.host.store.write(current.folder, takesFile(this.part), JSON.stringify(this.takes)).catch(() => {});
   }
 
   /** The time a song's split takes (before it starts) or has left (while it runs). */
@@ -895,6 +934,7 @@ export class Practice {
     const kept = await (await this.host.store.read(current.folder, LYRICS))?.text().catch(() => "");
     if (kept) current.lyrics = this.scorer.lyricsSet(kept, true).lines;
     this.passes = parsePasses(await (await this.host.store.read(current.folder, historyFile(part)))?.text().catch(() => undefined));
+    this.takes = parseTakes(await (await this.host.store.read(current.folder, takesFile(part)))?.text().catch(() => undefined));
     this.trail = [];
     if (this.loopState) this.applyLoop(false);
     this.restartFrom(position);
@@ -979,6 +1019,57 @@ function mono(channels: Float32Array[]): Float32Array {
   const out = new Float32Array(channels[0]!.length);
   for (const channel of channels) for (let i = 0; i < out.length; ++i) out[i]! += channel[i]! / channels.length;
   return out;
+}
+
+/** A pass kept for the take review (the desktop's recordings, without the audio). */
+interface Take {
+  id: number;
+  name: string;
+  at: number;
+  start: number;
+  seconds: number;
+  speed: number;
+  semitones: number;
+  notes: number[];
+  phrases: number[];
+  frames: number[];
+  score: number;
+  lean: number;
+  noteScores: Record<string, number | boolean>[];
+  phraseScores: Record<string, number | boolean>[];
+  lowest: number;
+  highest: number;
+}
+
+const MAX_TAKES = 8;
+const takesFile = (part: Part) => (part === "lead" ? "takes.json" : `takes-${part}.json`);
+
+function parseTakes(text: string | undefined): Take[] {
+  try {
+    const list = JSON.parse(text ?? "[]") as unknown;
+    return Array.isArray(list) ? list.filter((t): t is Take => typeof t?.id === "number" && Array.isArray(t.frames) && Array.isArray(t.notes)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** What the page's take review shows (the desktop's describeReview). */
+function reviewOf(take: Take) {
+  return {
+    take: take.id,
+    name: take.name,
+    start: Math.max(0, round3(take.start - 1)),
+    end: round3(take.start + take.seconds + 1),
+    notes: take.notes,
+    phrases: take.phrases,
+    frames: take.frames,
+    score: take.score,
+    lean: take.lean,
+    noteScores: take.noteScores,
+    phraseScores: take.phraseScores,
+    lowest: take.lowest,
+    highest: take.highest,
+  };
 }
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
