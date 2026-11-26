@@ -17,8 +17,8 @@ type Tab = "record" | "ideas";
 
 const app = document.getElementById("app")!;
 const main = el("main", { class: "cap-main" });
-const ideas = ideasView(() => show("record"));
 const record = recordView({ recorder, saved: () => void ideas.reload(), openIdeas: () => show("ideas") });
+const ideas = ideasView(() => show("record"), (idea) => { show("record"); record.layerOver(idea); });
 
 const tabs: Record<Tab, HTMLButtonElement> = {
   record: el("button", { type: "button", class: "cap-tab", role: "tab", onclick: () => show("record") }, el("b", { "aria-hidden": "true" }, "●"), "Record"),

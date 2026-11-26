@@ -1,10 +1,12 @@
 import { drawBars, el, formatTime, sheet, toast } from "./dom";
+import { shareIdea } from "./actions";
+import { openDetail } from "./detail-view";
 import { deleteIdea, listIdeas, readAudio, saveIdea, type Idea } from "./store";
 
 type Filter = "all" | "starred" | "today";
 
 /** The Ideas screen: newest first, tap to play. */
-export function ideasView(openRecord: () => void): { root: HTMLElement; reload(): Promise<void>; stopPlaying(): void } {
+export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): { root: HTMLElement; reload(): Promise<void>; stopPlaying(): void; open(idea: Idea): void } {
   const root = el("section", { class: "ideas", "aria-label": "Ideas" });
   const search = el("input", { type: "search", class: "search", placeholder: "Search ideas", "aria-label": "Search ideas", oninput: () => render() });
   const filters = el("div", { class: "filters", role: "group", "aria-label": "Filter" });
@@ -82,27 +84,21 @@ export function ideasView(openRecord: () => void): { root: HTMLElement; reload()
     setTimeout(() => { if (!undone) void deleteIdea(idea.id); }, 10500);
   }
 
-  async function share(idea: Idea) {
-    const blob = await readAudio(idea);
-    const file = new File([blob], `${idea.name.replace(/[^\w .-]+/g, "_")}.wav`, { type: "audio/wav" });
-    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-    if (nav.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: idea.name }); return; } catch (error) { if ((error as DOMException).name === "AbortError") return; }
-    }
-    const url = URL.createObjectURL(file);
-    el("a", { href: url, download: file.name }).click();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
-
   function menu(idea: Idea) {
     const dialog = sheet(idea.name,
       el("div", { class: "sheet-list" },
+        row("Open", () => { dialog.close(); open(idea); }),
         row("Rename", () => { dialog.close(); rename(idea); }),
         row(idea.starred ? "Remove the star" : "Star", () => { dialog.close(); void update(idea, { starred: !idea.starred }); }),
-        row("Share or save the audio", () => { dialog.close(); void share(idea); }),
+        row("Share or save the audio", () => { dialog.close(); void shareIdea(idea); }),
         row("Delete", () => { dialog.close(); remove(idea); }, true)));
   }
   const row = (label: string, run: () => void, danger = false) => el("button", { type: "button", class: `sheet-row${danger ? " danger" : ""}`, onclick: run }, label);
+
+  function open(idea: Idea) {
+    stopPlaying();
+    openDetail(idea, { changed: () => void reload(), layer, remove, open: (made) => setTimeout(() => open(made), 50) });
+  }
 
   function rename(idea: Idea) {
     const input = el("input", { type: "text", value: idea.name, maxLength: 80, "aria-label": "Name", style: "width:100%;max-width:100%" });
@@ -121,11 +117,12 @@ export function ideasView(openRecord: () => void): { root: HTMLElement; reload()
     return el("article", { class: `idea${isPlaying ? " is-playing" : ""}`, "data-id": idea.id },
       el("button", { type: "button", class: "idea-play", "aria-label": `${isPlaying && !playing!.audio.paused ? "Pause" : "Play"} ${idea.name}`, onclick: () => void toggle(idea) }, isPlaying && !playing!.audio.paused ? "❚❚" : "▶"),
       el("div", { class: "idea-body" },
-        el("button", { type: "button", class: "idea-name", onclick: () => rename(idea) }, `${idea.starred ? "★ " : ""}${idea.name}`),
+        el("button", { type: "button", class: "idea-name", onclick: () => open(idea) }, `${idea.starred ? "★ " : ""}${idea.name}`),
         el("div", { class: "idea-meta" }, el("span", {}, `${date} · ${formatTime(idea.length, false)}`),
           idea.key ? el("span", { class: "tag" }, idea.key) : null, idea.bpm ? el("span", { class: "tag" }, `${idea.bpm} BPM`) : null,
           idea.status === "recovered" ? el("span", { class: "tag warn" }, "Recovered") : null,
           idea.interrupted ? el("span", { class: "tag warn" }, "Stopped early") : null,
+          idea.parent ? el("span", { class: "tag" }, "Layer / copy") : null,
           idea.note ? el("span", {}, `· ${idea.note}`) : null)),
       el("button", { type: "button", class: "icon-btn idea-menu", "aria-label": `More for ${idea.name}`, onclick: () => menu(idea) }, "⋯"),
       canvas);
@@ -139,5 +136,5 @@ export function ideasView(openRecord: () => void): { root: HTMLElement; reload()
     } else if (!shown.length) list.replaceChildren(el("div", { class: "empty" }, "No idea matches."));
   }
 
-  return { root, reload, stopPlaying };
+  return { root, reload, stopPlaying, open };
 }

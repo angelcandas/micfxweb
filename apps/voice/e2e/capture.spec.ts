@@ -88,3 +88,62 @@ test("the desktop keeps the Live screen", async ({ browser }) => {
   await expect(page).not.toHaveURL(/capture/);
   await context.close();
 });
+
+async function recordOne(page: Page, ms = 3500) {
+  await record(page).click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await page.waitForTimeout(ms);
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByText(/^Saved/).first()).toBeVisible();
+}
+
+test("an idea opens full screen: seek, loop, speed, notes, polish, layer and mix", async ({ page, context }) => {
+  test.setTimeout(90_000);
+  await context.grantPermissions(["microphone"]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await ready(page);
+  await recordOne(page);
+  await page.getByRole("tab", { name: /Ideas/ }).click();
+  await page.locator("article.idea .idea-name").click();
+  const detail = page.locator("dialog.detail");
+  await expect(detail).toBeVisible();
+
+  await detail.getByRole("button", { name: "Play", exact: true }).click();
+  await page.waitForTimeout(600);
+  await detail.getByRole("button", { name: "Pause" }).click();
+  await detail.getByRole("button", { name: "0.5×" }).click();
+  await detail.getByRole("button", { name: "Loop" }).click(); // start
+  await detail.getByRole("button", { name: /set the end/ }).click(); // end
+  await expect(detail.getByRole("button", { name: /^Loop 0:/ })).toBeVisible();
+  await detail.getByRole("button", { name: /Mark here/ }).click();
+  await detail.getByLabel("Note").fill("chorus idea in G");
+  await detail.getByLabel("Note").blur();
+  await detail.getByLabel("Tempo in BPM").fill("96");
+  await detail.getByLabel("Tempo in BPM").blur();
+
+  // The melody as notes.
+  await detail.getByRole("button", { name: /Turn the melody into notes/ }).click();
+  await expect(detail.getByRole("button", { name: "Save as MIDI" })).toBeVisible({ timeout: 30_000 });
+
+  // A polished copy.
+  await detail.getByRole("button", { name: /Make it sound good/ }).click();
+  await expect(page.getByText("Saved a polished copy")).toBeVisible({ timeout: 30_000 });
+  await detail.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator("article.idea")).toHaveCount(2);
+  await expect(page.locator("article.idea").first()).toContainText("polished");
+
+  // A layer over the first idea, then the mix.
+  await page.locator("article.idea", { hasText: "chorus idea in G", hasNotText: "polished" }).locator(".idea-name").click();
+  await detail.getByRole("button", { name: /Layer another take/ }).click();
+  await expect(page.getByText(/Layering over/)).toBeVisible();
+  await recordOne(page, 2500);
+  await page.getByRole("tab", { name: /Ideas/ }).click();
+  await expect(page.locator("article.idea")).toHaveCount(3);
+  await page.locator("article.idea", { hasText: "Layer / copy" }).first().locator(".idea-name").click();
+  await detail.getByRole("button", { name: /Mix with the idea underneath/ }).click();
+  await expect(page.getByText("Mixed into a new idea.")).toBeVisible({ timeout: 20_000 });
+  await detail.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator("article.idea")).toHaveCount(4);
+  expect(errors).toEqual([]);
+});

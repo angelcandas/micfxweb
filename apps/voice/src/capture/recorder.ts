@@ -42,6 +42,7 @@ export class CaptureRecorder {
   private saveTimer = 0;
   private lastSave = 0;
   private starting: Promise<void> | undefined;
+  private under: AudioBufferSourceNode | undefined;
   settings: CaptureSettings = { preroll: true, deviceId: "" };
 
   get recording(): boolean { return Boolean(this.idea); }
@@ -135,7 +136,7 @@ export class CaptureRecorder {
   }
 
   /** Starts a take. The mic must be open. */
-  async start(parent?: string): Promise<Idea> {
+  async start(parent?: string, under?: AudioBuffer): Promise<Idea> {
     if (this.idea) return this.idea;
     if (!this.context || this.state !== "open") throw new Error("The microphone isn't open.");
     await this.context.resume().catch(() => {});
@@ -148,11 +149,26 @@ export class CaptureRecorder {
     this.idea = idea;
     this.frames = 0; this.bars = []; this.barPeak = 0; this.barFrames = 0; this.lastSave = Date.now();
     await saveIdea(idea); // "recording": if the page dies now, the next launch finds it
-    // What came just before the tap.
-    const before = this.ring;
+    // What came just before the tap (not over a layer: that would be the idea's own sound).
+    const before = under ? [] : this.ring;
     this.ring = []; this.ringFrames = 0;
     for (const chunk of before) this.push(chunk);
+    if (under && this.context) {
+      // The idea plays while this records; the layer's lag behind it is the audio delay both ways.
+      const source = this.context.createBufferSource();
+      source.buffer = under;
+      source.connect(this.context.destination);
+      source.start();
+      this.under = source;
+      this.idea = { ...this.idea, offset: Math.round(((this.context.outputLatency || 0) + this.context.baseLatency) * 1000) / 1000 };
+    }
     return idea;
+  }
+
+  /** An idea's audio, ready to play under a layer. */
+  async decode(wav: Blob): Promise<AudioBuffer> {
+    if (!this.context) throw new Error("The microphone isn't open.");
+    return this.context.decodeAudioData(await wav.arrayBuffer());
   }
 
   mark(): number {
@@ -167,6 +183,8 @@ export class CaptureRecorder {
     const idea = this.idea;
     if (!idea) return undefined;
     this.idea = undefined;
+    try { this.under?.stop(); } catch { /* already over */ }
+    this.under = undefined;
     const frames = await this.writer?.close();
     this.writer = undefined;
     const length = (frames ?? this.frames) / idea.rate;

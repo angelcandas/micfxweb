@@ -7,7 +7,7 @@ import { estimateTempo } from "./tempo";
 import { readSamples } from "./wav";
 
 let compiled: Promise<WebAssembly.Module> | undefined;
-function engineModule() {
+export function engineModule() {
   compiled ??= fetch(wasmUrl).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b));
   return compiled;
 }

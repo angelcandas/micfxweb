@@ -11,7 +11,7 @@ export interface RecordHooks {
 }
 
 /** The Record screen: one button, a timer, a waveform. */
-export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): void; start(): Promise<void>; stop(): Promise<void> } {
+export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): void; start(): Promise<void>; stop(): Promise<void>; layerOver(idea: Idea | undefined): void } {
   const { recorder } = hooks;
   const root = el("section", { class: "rec", "aria-label": "Record" });
   const dot = el("span", { class: "rec-dot", "aria-hidden": "true" });
@@ -27,8 +27,17 @@ export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): 
   } }, "Mark");
   const spacer = el("span", { class: "rec-side", style: "visibility:hidden", "aria-hidden": "true" });
   const last = el("div", { class: "rec-last" });
+  const banner = el("div", { class: "rec-banner", hidden: true, role: "status" });
+  let layerOf: Idea | undefined;
+  function layerOver(idea: Idea | undefined) {
+    layerOf = idea;
+    banner.hidden = !idea;
+    banner.replaceChildren();
+    if (idea) banner.append(el("span", {}, `Layering over “${idea.name}”. Put headphones on, then record.`), el("button", { type: "button", class: "chip", onclick: () => layerOver(undefined) }, "Cancel"));
+    last.replaceChildren();
+  }
   root.append(
-    el("div", { class: "rec-mic" }, dot, micText), wave, time, hint,
+    banner, el("div", { class: "rec-mic" }, dot, micText), wave, time, hint,
     el("div", { class: "rec-actions" }, spacer, button, mark), last);
 
   let level = 0;
@@ -75,7 +84,8 @@ export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): 
     await recorder.open();
     if (recorder.state !== "open") return refresh();
     try {
-      await recorder.start();
+      const under = layerOf ? await recorder.decode(await readAudio(layerOf)) : undefined;
+      await recorder.start(layerOf?.id, under);
     } catch (error) {
       hint.textContent = `Couldn't start: ${error instanceof Error ? error.message : String(error)}`;
       return refresh();
@@ -101,6 +111,7 @@ export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): 
     hint.textContent = "";
     refresh();
     if (idea) done(idea);
+    if (layerOf) layerOver(undefined);
   }
 
   function done(idea: Idea) {
@@ -151,5 +162,5 @@ export function recordView(hooks: RecordHooks): { root: HTMLElement; refresh(): 
     else { cancelAnimationFrame(raf); raf = requestAnimationFrame(draw); if (recorder.recording) void lock(); }
   });
   refresh();
-  return { root, refresh, start, stop };
+  return { root, refresh, start, stop, layerOver };
 }

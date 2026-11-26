@@ -26,6 +26,8 @@ export interface Idea {
   deleted?: number;
   /** The idea this one was layered over. */
   parent?: string;
+  /** Seconds the layer lags what it was recorded over (the phone's audio delay). */
+  offset?: number;
   /** Where the take went wrong (a call, the screen locking). */
   interrupted?: number;
   /** Set once the analysis has run. */

@@ -77,3 +77,21 @@ dialog.sheet h2 { margin: 12px 0 8px; font-size: 18px; }
 .toast { position: fixed; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); max-width: 536px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 8px 6px 16px; border-radius: 16px; background: #222838; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 20; }
 .toast button { min-height: 44px; padding: 0 14px; border: 0; background: transparent; color: var(--accent); font-weight: 650; cursor: pointer; }
 .toast[hidden] { display: none; }
+
+/* Idea detail */
+dialog.detail { margin: 0; padding: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border: 0; background: var(--bg); color: var(--text); }
+dialog.detail[open] { display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); }
+dialog.detail .cap-top { max-width: 560px; width: 100%; margin: 0 auto; }
+.detail-body { flex: 1; overflow-y: auto; max-width: 560px; width: 100%; margin: 0 auto; padding: 4px 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+.detail-wave { width: 100%; height: 120px; background: var(--panel); border-radius: 16px; touch-action: none; cursor: pointer; }
+.detail-time { text-align: center; font: 600 22px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.detail-play { width: 72px; height: 72px; font-size: 28px; }
+.detail-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.detail-note { height: auto; padding: 12px; resize: vertical; font: inherit; }
+.detail-notes { padding: 12px; border-radius: 16px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+.detail-notes[hidden] { display: none; }
+.detail-roll { width: 100%; height: 100px; background: var(--panel-2); border-radius: 12px; }
+.sheet-row small { display: block; }
+.rec-banner { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 16px; border-radius: 14px; background: rgba(140, 123, 255, 0.16); font-size: 15px; }
+.rec-banner[hidden] { display: none; }
+.detail-body > * { flex-shrink: 0; }
