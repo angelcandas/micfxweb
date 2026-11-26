@@ -77,3 +77,16 @@ body[data-web-app="daw"] .app-project { max-width: min(560px, 50vw); }
 .web-phone-page a { display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 14px; text-decoration: none; font-weight: 600; }
 .web-phone-primary { background: #7b6cff; color: #fff; }
 .web-phone-secondary { color: #aab2c5; border: 1px solid #343b50; }
+
+/* ---------- Tablets and touch (touch.ts) ---------- */
+@media (pointer: coarse) {
+  body.web-touch { -webkit-touch-callout: none; touch-action: manipulation; }
+  body.web-touch :not(input):not(textarea) { -webkit-user-select: none; user-select: none; }
+  /* Bigger targets for the controls you use most; a few px of invisible hit area on the dense ones. */
+  body.web-touch :is(.transport-button, .tool, .record-button, .capture-button, .ib, .mode-button, .dock-tab, .library-nav-item, .mini) { min-height: 40px; min-width: 40px; }
+  body.web-touch :is(.tt, .th-fold, .head-switch, .fx-count, .library-preview-play, .library-preview-auto) { position: relative; }
+  body.web-touch :is(.tt, .th-fold, .head-switch, .fx-count, .library-preview-play, .library-preview-auto)::after { content: ""; position: absolute; inset: -6px; }
+  body.web-touch select, body.web-touch .dropdown { min-height: 38px; }
+}
+.web-landscape-tip { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 9000; display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 480px; margin: 0 auto; padding: 8px 8px 8px 16px; border-radius: 14px; background: #222838; color: #e9ecf4; font-size: 15px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.web-landscape-tip button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: #7b6cff; color: #fff; font-weight: 600; }

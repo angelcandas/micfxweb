@@ -10,6 +10,7 @@ import { sendMixToVoice, takeInbox } from "./partner";
 import { partnerUrl } from "@micfx/handoff";
 import { addAutosaveStatus, flushOnHide } from "./versions";
 import { showAudioSettings } from "./audio-settings";
+import { addTouchSupport } from "./touch";
 import "./web.css";
 
 const DESKTOP = new URL("desktop/", document.baseURI).href;
@@ -108,6 +109,7 @@ async function boot() {
   const title = document.querySelector(".app-title");
   if (title) title.textContent = "MicFX DAW";
   addSourceLink();
+  addTouchSupport();
   autosave = addAutosaveStatus(engine, [
     { label: "Audio settings…", hint: "Sample rate, low latency and the delay you hear", action: async () => showAudioSettings(engine) },
     { label: "Audio inputs…", hint: "Microphones and interfaces to record from, several at once", action: () => showInputs(engine, () => void engine.call("daw", ["session", {}]).then((s) => backend.emit("dawSession", s))) },

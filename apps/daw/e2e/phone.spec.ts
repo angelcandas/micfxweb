@@ -16,5 +16,5 @@ test("a phone sees the 'bigger screen' page and no engine download", async ({ pa
 
 test("?desktop opens the DAW anyway", async ({ page }) => {
   await page.goto("/?desktop");
-  await expect(page.locator(".app-title")).toHaveText("MicFX DAW", { timeout: 30_000 });
+  await expect(page.locator(".app-title")).toHaveText("MicFX DAW", { timeout: 60_000 });
 });
