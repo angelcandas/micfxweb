@@ -18,7 +18,11 @@ export default defineConfig({
       args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${voice}`, "--autoplay-policy=no-user-gesture-required"],
     },
   },
-  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
+  // The whole-song split is heavy (cores and memory): it runs first, alone, in a fresh browser.
+  projects: [
+    { name: "split", testMatch: /split\.spec\.ts/, use: { browserName: "chromium" } },
+    { name: "chromium", testIgnore: /split\.spec\.ts/, dependencies: ["split"], use: { browserName: "chromium" } },
+  ],
   webServer: {
     command: "pnpm exec vite preview --port 4173 --strictPort",
     url: "http://localhost:4173",
