@@ -167,6 +167,8 @@ body.web-reduce-motion *, body.web-reduce-motion *::before, body.web-reduce-moti
   body[data-platform="web"] .live-hint-line .audio-status { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
+.web-capture-link { display: none; text-decoration: none; }
+@media (max-width: 760px) { .web-capture-link { display: inline-flex; align-items: center; } }
 /* ---------- Phones, phase 0 (mobile plan): touch targets, a fixed record bar, less desktop ---------- */
 .web-transport-more { display: none; }
 @media (max-width: 760px) {

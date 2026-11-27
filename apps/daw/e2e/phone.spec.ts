@@ -9,7 +9,7 @@ test("a phone sees the 'bigger screen' page and no engine download", async ({ pa
   page.on("request", (request) => { if (request.url().endsWith(".wasm")) wasm.push(request.url()); });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "MicFX DAW needs a bigger screen" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open MicFX Voice" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Record an idea" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
   expect(wasm).toEqual([]);
 });

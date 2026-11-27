@@ -12,7 +12,7 @@ import { addDragAndDrop } from "./drop";
 import { addSendToDaw, takeFromDaw } from "./handoff";
 import { addLanguage } from "./i18n";
 import { addMicHelp } from "./mic-help";
-import { addPhoneLayout, addTransportMore } from "./phone";
+import { addCaptureLink, addPhoneLayout, addTransportMore, openCaptureOnPhones } from "./phone";
 import { addPracticeProgress } from "./practice-progress";
 import { addPracticeTools } from "./practice-tools";
 import { addTabAudioNote } from "./tab-audio";
@@ -24,6 +24,7 @@ import "./web.css";
 const DESKTOP = new URL("desktop/", document.baseURI).href;
 
 async function boot() {
+  if (openCaptureOnPhones()) return;
   const shadow = await createShadowEngine();
   const parameters = shadow.parameterInfo();
   const audio = new LiveAudio();
@@ -78,6 +79,7 @@ async function boot() {
   addAccessibility();
   addPhoneLayout();
   addTransportMore();
+  addCaptureLink();
   addPracticeProgress(native.web.practice);
   addPracticeTools(native.web.practice, native.web.startAudio);
   addLanguage();

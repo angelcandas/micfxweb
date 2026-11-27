@@ -11,7 +11,7 @@ const sideways = (page: Page) => page.evaluate(() => document.documentElement.sc
 test("the Live view fits a phone, and effects come from a sheet", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  await page.goto("/?live=1");
   await page.locator(".recorder .record-button").waitFor();
   // No desktop welcome card on a phone.
   await expect(page.locator(".setup-backdrop:not([hidden])")).toHaveCount(0);
@@ -39,7 +39,7 @@ test("the Live view fits a phone, and effects come from a sheet", async ({ page 
 
 test("a tablet keeps the Looper and Practice buttons", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
-  await page.goto("/");
+  await page.goto("/?live=1");
   await page.locator(".recorder .record-button").waitFor();
   await page.getByRole("button", { name: "Done" }).click();
   await expect(page.locator(".chip.practice-toggle")).toBeVisible();
@@ -49,7 +49,7 @@ test("a tablet keeps the Looper and Practice buttons", async ({ page }) => {
 });
 
 test("phone: touch-sized controls, a record bar that stays in view, no desktop-only controls", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?live=1");
   const record = page.locator(".recorder .record-button");
   await record.waitFor();
   await page.waitForTimeout(500);

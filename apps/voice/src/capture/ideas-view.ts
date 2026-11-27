@@ -1,0 +1,183 @@
+import { drawBars, el, formatTime, sheet, toast } from "./dom";
+import { shareIdea } from "./actions";
+import { importFiles, isPhone, sendToDaw, shareZip } from "./transfer";
+import { openDetail } from "./detail-view";
+import { deleteIdea, listIdeas, readAudio, saveIdea, type Idea } from "./store";
+
+type Filter = "all" | "starred" | "today";
+
+/** The Ideas screen: newest first, tap to play. */
+export function ideasView(openRecord: () => void, layer: (idea: Idea) => void): { root: HTMLElement; reload(): Promise<void>; stopPlaying(): void; open(idea: Idea): void } {
+  const root = el("section", { class: "ideas", "aria-label": "Ideas" });
+  const search = el("input", { type: "search", class: "search", placeholder: "Search ideas", "aria-label": "Search ideas", oninput: () => render() });
+  const filters = el("div", { class: "filters", role: "group", "aria-label": "Filter" });
+  const list = el("div", { class: "idea-list", style: "display:flex;flex-direction:column;gap:10px" });
+  const picker = el("input", { type: "file", accept: "audio/*,.m4a,.mp3,.wav,.aac,.ogg,.flac", multiple: true, hidden: true, onchange: async () => {
+    const files = [...(picker.files ?? [])];
+    picker.value = "";
+    if (!files.length) return;
+    toast(`Adding ${files.length} file${files.length > 1 ? "s" : ""}…`, undefined, 4000);
+    const { added, failed } = await importFiles(files);
+    await reload();
+    toast(failed.length ? `Couldn't read ${failed.join(", ")}.` : `Added ${added.length} idea${added.length > 1 ? "s" : ""}.`);
+  } });
+  const addAudio = el("button", { type: "button", class: "chip", onclick: () => picker.click() }, "Add audio");
+  const selectToggle = el("button", { type: "button", class: "chip", "aria-pressed": "false", onclick: () => setSelecting(!selecting) }, "Select");
+  const bar = el("div", { class: "select-bar", hidden: true });
+  filters.append(addAudio, selectToggle);
+  root.append(el("div", { class: "ideas-tools" }, search, filters, picker), list, bar);
+
+  let ideas: Idea[] = [];
+  let filter: Filter = "all";
+  let selecting = false;
+  const picked = new Set<string>();
+  let playing: { id: string; audio: HTMLAudioElement; url: string } | undefined;
+
+  for (const [id, label] of [["all", "All"], ["starred", "Starred"], ["today", "Today"]] as const) {
+    const chip = el("button", { type: "button", class: "chip", "aria-pressed": String(id === filter), onclick: () => {
+      filter = id;
+      filters.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-pressed", String(["all", "starred", "today"][i] === filter)));
+      render();
+    } }, label);
+    filters.append(chip);
+  }
+
+  function setSelecting(on: boolean) {
+    selecting = on;
+    picked.clear();
+    selectToggle.setAttribute("aria-pressed", String(on));
+    selectToggle.textContent = on ? "Done" : "Select";
+    render();
+  }
+
+  function renderBar() {
+    bar.hidden = !selecting;
+    if (!selecting) return;
+    const chosen = ideas.filter((i) => picked.has(i.id));
+    const off = chosen.length === 0;
+    bar.replaceChildren(
+      ...[el("span", {}, off ? "Pick ideas" : `${chosen.length} picked`),
+      isPhone() ? null : el("button", { type: "button", class: "chip", disabled: off, onclick: async () => {
+        const answer = await sendToDaw(chosen);
+        toast(answer.message ?? (answer.ok ? "Sent to MicFX DAW." : "MicFX DAW didn't take them."));
+      } }, "Send to DAW"),
+      el("button", { type: "button", class: "chip", disabled: off, onclick: () => void shareZip(chosen) }, isPhone() ? "Save for the computer" : "Save files")].filter((n): n is HTMLElement => n !== null));
+  }
+
+  async function reload() {
+    ideas = (await listIdeas()).filter((i) => !i.deleted && i.status !== "recording").sort((a, b) => b.created - a.created);
+    render();
+  }
+
+  function visible(): Idea[] {
+    const q = search.value.trim().toLowerCase();
+    const midnight = new Date().setHours(0, 0, 0, 0);
+    return ideas.filter((i) =>
+      (filter === "all" || (filter === "starred" && i.starred) || (filter === "today" && i.created >= midnight))
+      && (!q || `${i.name} ${i.note} ${i.key ?? ""}`.toLowerCase().includes(q)));
+  }
+
+  function stopPlaying() {
+    if (!playing) return;
+    playing.audio.pause();
+    URL.revokeObjectURL(playing.url);
+    playing = undefined;
+    render();
+  }
+
+  async function toggle(idea: Idea) {
+    if (playing?.id === idea.id) return playing.audio.paused ? void playing.audio.play() : playing.audio.pause();
+    stopPlaying();
+    const url = URL.createObjectURL(await readAudio(idea));
+    const audio = new Audio(url);
+    playing = { id: idea.id, audio, url };
+    audio.addEventListener("ended", () => { audio.currentTime = 0; render(); });
+    audio.addEventListener("pause", () => render());
+    audio.addEventListener("play", () => { render(); tick(); });
+    await audio.play().catch(() => {});
+  }
+
+  function tick() {
+    if (!playing || playing.audio.paused) return;
+    const canvas = list.querySelector<HTMLCanvasElement>(`[data-id="${playing.id}"] canvas`);
+    const idea = ideas.find((i) => i.id === playing!.id);
+    if (canvas && idea) drawBars(canvas, idea.peaks, { played: playing.audio.currentTime / Math.max(0.1, idea.length) });
+    requestAnimationFrame(tick);
+  }
+
+  async function update(idea: Idea, changes: Partial<Idea>) {
+    const next = { ...idea, ...changes };
+    await saveIdea(next);
+    ideas = ideas.map((i) => (i.id === idea.id ? next : i));
+    render();
+  }
+
+  function remove(idea: Idea) {
+    if (playing?.id === idea.id) stopPlaying();
+    void saveIdea({ ...idea, deleted: Date.now() });
+    ideas = ideas.filter((i) => i.id !== idea.id);
+    render();
+    let undone = false;
+    toast(`Deleted “${idea.name}”`, { label: "Undo", run: () => { undone = true; void saveIdea(idea).then(reload); } }, 10000);
+    setTimeout(() => { if (!undone) void deleteIdea(idea.id); }, 10500);
+  }
+
+  function menu(idea: Idea) {
+    const dialog = sheet(idea.name,
+      el("div", { class: "sheet-list" },
+        row("Open", () => { dialog.close(); open(idea); }),
+        row("Rename", () => { dialog.close(); rename(idea); }),
+        row(idea.starred ? "Remove the star" : "Star", () => { dialog.close(); void update(idea, { starred: !idea.starred }); }),
+        row("Share or save the audio", () => { dialog.close(); void shareIdea(idea); }),
+        row("Delete", () => { dialog.close(); remove(idea); }, true)));
+  }
+  const row = (label: string, run: () => void, danger = false) => el("button", { type: "button", class: `sheet-row${danger ? " danger" : ""}`, onclick: run }, label);
+
+  function open(idea: Idea) {
+    stopPlaying();
+    openDetail(idea, { changed: () => void reload(), layer, remove, open: (made) => setTimeout(() => open(made), 50) });
+  }
+
+  function rename(idea: Idea) {
+    const input = el("input", { type: "text", value: idea.name, maxLength: 80, "aria-label": "Name", style: "width:100%;max-width:100%" });
+    const note = el("input", { type: "text", value: idea.note, placeholder: "A note", maxLength: 300, "aria-label": "Note", style: "width:100%;max-width:100%;margin-top:8px" });
+    const dialog = sheet("Rename", input, note, el("button", { type: "button", class: "chip", style: "margin-top:12px", onclick: () => {
+      dialog.close();
+      void update(idea, { name: input.value.trim() || idea.name, note: note.value.trim() });
+    } }, "Save"));
+  }
+
+  function card(idea: Idea): HTMLElement {
+    const isPlaying = playing?.id === idea.id;
+    const canvas = el("canvas", { class: "idea-wave", "aria-hidden": "true" });
+    requestAnimationFrame(() => drawBars(canvas, idea.peaks, { played: isPlaying ? playing!.audio.currentTime / Math.max(0.1, idea.length) : undefined }));
+    const date = new Date(idea.created).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    return el("article", { class: `idea${isPlaying ? " is-playing" : ""}`, "data-id": idea.id },
+      selecting ? el("input", { type: "checkbox", class: "idea-check", "aria-label": `Pick ${idea.name}`, checked: picked.has(idea.id), onchange: (event: Event) => {
+        if ((event.currentTarget as HTMLInputElement).checked) picked.add(idea.id); else picked.delete(idea.id);
+        renderBar();
+      } }) : null,
+      el("button", { type: "button", class: "idea-play", "aria-label": `${isPlaying && !playing!.audio.paused ? "Pause" : "Play"} ${idea.name}`, onclick: () => void toggle(idea) }, isPlaying && !playing!.audio.paused ? "❚❚" : "▶"),
+      el("div", { class: "idea-body" },
+        el("button", { type: "button", class: "idea-name", onclick: () => open(idea) }, `${idea.starred ? "★ " : ""}${idea.name}`),
+        el("div", { class: "idea-meta" }, el("span", {}, `${date} · ${formatTime(idea.length, false)}`),
+          idea.key ? el("span", { class: "tag" }, idea.key) : null, idea.bpm ? el("span", { class: "tag" }, `${idea.bpm} BPM`) : null,
+          idea.status === "recovered" ? el("span", { class: "tag warn" }, "Recovered") : null,
+          idea.interrupted ? el("span", { class: "tag warn" }, "Stopped early") : null,
+          idea.parent ? el("span", { class: "tag" }, "Layer / copy") : null,
+          idea.note ? el("span", {}, `· ${idea.note}`) : null)),
+      el("button", { type: "button", class: "icon-btn idea-menu", "aria-label": `More for ${idea.name}`, onclick: () => menu(idea) }, "⋯"),
+      canvas);
+  }
+
+  function render() {
+    const shown = visible();
+    renderBar();
+    list.replaceChildren(...shown.map(card));
+    if (!ideas.length) {
+      list.replaceChildren(el("div", { class: "empty" }, el("div", {}, "Your ideas will be here. Catch the first one."), el("button", { type: "button", class: "chip", onclick: openRecord }, "Record")));
+    } else if (!shown.length) list.replaceChildren(el("div", { class: "empty" }, "No idea matches."));
+  }
+
+  return { root, reload, stopPlaying, open };
+}

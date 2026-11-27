@@ -57,3 +57,25 @@ export function addTransportMore() {
   });
   transport.append(more);
 }
+
+/** Phones: a way back to Capture from the Live screen. */
+export function addCaptureLink() {
+  const chips = document.querySelector(".topbar .chips");
+  if (!chips || chips.querySelector(".web-capture-link")) return;
+  const link = Object.assign(document.createElement("a"), { className: "chip web-capture-link", href: "capture.html", textContent: "Capture", title: "Record an idea in one tap" });
+  chips.prepend(link);
+}
+
+/** A phone opens on Capture; "?live" (or a shared-sound link) opens the effects screen. */
+export function openCaptureOnPhones(): boolean {
+  try {
+    if (location.hash || /[?&](live|desktop)\b/.test(location.search)) return false;
+    if (matchMedia("(max-width: 760px) and (pointer: coarse)").matches) {
+      location.replace("capture.html");
+      return true;
+    }
+  } catch {
+    /* (stay here) */
+  }
+  return false;
+}
