@@ -65,3 +65,17 @@ export function addCaptureLink() {
   const link = Object.assign(document.createElement("a"), { className: "chip web-capture-link", href: "capture.html", textContent: "Capture", title: "Record an idea in one tap" });
   chips.prepend(link);
 }
+
+/** A phone opens on Capture; "?live" (or a shared-sound link) opens the effects screen. */
+export function openCaptureOnPhones(): boolean {
+  try {
+    if (location.hash || /[?&](live|desktop)\b/.test(location.search)) return false;
+    if (matchMedia("(max-width: 760px) and (pointer: coarse)").matches) {
+      location.replace("capture.html");
+      return true;
+    }
+  } catch {
+    /* (stay here) */
+  }
+  return false;
+}
