@@ -102,3 +102,4 @@ dialog.detail .cap-top { max-width: 560px; width: 100%; margin: 0 auto; }
 .idea:has(.idea-check) { grid-template-columns: 56px 1fr 0; }
 .idea:has(.idea-check) .idea-play { display: none; }
 .chip:disabled { opacity: 0.4; }
+.sheet-group { margin: 14px 4px 4px; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
