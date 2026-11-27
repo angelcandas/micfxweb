@@ -102,7 +102,7 @@ export class Tracks {
   /** Asks for a song file (a click), then loads it. False when nothing was picked. */
   pickBackingTrack(): Promise<boolean> {
     return new Promise((resolve) => {
-      const input = Object.assign(document.createElement("input"), { type: "file", accept: "audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a" });
+      const input = Object.assign(document.createElement("input"), { type: "file", accept: "audio/*,video/mp4,video/quicktime,video/webm,.wav,.aif,.aiff,.flac,.ogg,.opus,.mp3,.m4a,.aac,.mp4,.m4v,.mov,.webm" });
       input.addEventListener("change", () => {
         const file = input.files?.[0];
         resolve(Boolean(file));

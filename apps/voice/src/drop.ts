@@ -18,7 +18,7 @@ export interface DropHooks {
 
 export type DropKind = "audio" | "setlist" | "lyrics" | "backup" | "unknown";
 
-const AUDIO = /\.(wav|aiff?|flac|ogg|oga|opus|mp3|m4a|aac|webm)$/i;
+const AUDIO = /\.(wav|aiff?|flac|ogg|oga|opus|mp3|m4a|aac|webm|mp4|m4v|mov|3gp)$/i;
 
 export function dropKind(file: { name: string; type: string }): DropKind {
   const name = file.name.toLowerCase();
