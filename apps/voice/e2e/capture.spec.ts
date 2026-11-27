@@ -179,3 +179,31 @@ test("audio shared from another app lands in Ideas (the share target)", async ({
   });
   expect(final).toContain("capture.html?shared=1");
 });
+
+test("play along with a click and a drone, and add a beat", async ({ page, context }) => {
+  await context.grantPermissions(["microphone"]);
+  await ready(page);
+  await recordOne(page, 3000);
+  await page.getByRole("tab", { name: /Ideas/ }).click();
+  await page.locator("article.idea .idea-name").click();
+  const detail = page.locator("dialog.detail");
+  await detail.getByRole("button", { name: "Click", exact: true }).click();
+  await expect(detail.getByRole("button", { name: "Click", exact: true })).toHaveAttribute("aria-pressed", "true");
+  // The drone needs a key: it says so, and works once there is one.
+  await detail.getByRole("button", { name: "Drone" }).click();
+  await expect(detail.getByText(/Set the key above first/)).toBeVisible();
+  await detail.getByLabel("Key").fill("A minor");
+  await detail.getByLabel("Key").blur();
+  await detail.getByRole("button", { name: "Drone" }).click();
+  await expect(detail.getByRole("button", { name: "Drone" })).toHaveAttribute("aria-pressed", "true");
+  await detail.getByRole("button", { name: "Play", exact: true }).click(); // the click and drone sound with it
+  await page.waitForTimeout(800);
+  await detail.getByRole("button", { name: "Pause" }).click();
+  // A beat under it, as a new idea.
+  await detail.getByRole("button", { name: /Add a beat/ }).click();
+  await page.getByRole("button", { name: "Four on the floor" }).click();
+  await expect(page.getByText("Saved with the beat as a new idea.")).toBeVisible({ timeout: 20_000 });
+  await detail.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator("article.idea")).toHaveCount(2);
+  await expect(page.locator("article.idea").first()).toContainText("beat");
+});

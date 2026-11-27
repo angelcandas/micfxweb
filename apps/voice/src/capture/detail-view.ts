@@ -1,7 +1,9 @@
 import { findMelody } from "../analysis-client";
 import { engineModule } from "./analyze";
 import { fileName, shareFile, shareIdea } from "./actions";
-import { drawBars, el, formatTime, toast } from "./dom";
+import { BEAT_STYLES, renderBeat, type BeatStyle } from "./beat";
+import { drawBars, el, formatTime, sheet, toast } from "./dom";
+import { PlayAlong, parseKey } from "./playalong";
 import { saveSamples, mixDown, resample } from "./make-idea";
 import { notesToMidi, parseMelody, type Note } from "./midi";
 import PolishWorker from "./polish-worker?worker";
@@ -39,6 +41,9 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
 
   const audio = new Audio();
   audio.preservesPitch = true;
+  const along = new PlayAlong();
+  along.bpm = idea.bpm ?? 100;
+  along.key = parseKey(idea.key);
   let url = "";
   let loop: { a?: number; b?: number; on: boolean } = { on: false };
   let raf = 0;
@@ -64,12 +69,14 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
   };
   const tick = () => {
     if (loop.on && loop.a !== undefined && audio.currentTime >= (loop.b ?? idea.length) - 0.02) audio.currentTime = loop.a;
+    along.tick(audio.currentTime, audio.playbackRate);
     paint();
     raf = audio.paused ? 0 : requestAnimationFrame(tick);
   };
-  audio.addEventListener("play", () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); });
-  audio.addEventListener("pause", paint);
-  audio.addEventListener("ended", () => { audio.currentTime = 0; paint(); });
+  audio.addEventListener("play", () => { along.seek(audio.currentTime); along.syncDrone(true); cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); });
+  audio.addEventListener("pause", () => { along.syncDrone(false); paint(); });
+  audio.addEventListener("seeked", () => along.seek(audio.currentTime));
+  audio.addEventListener("ended", () => { along.syncDrone(false); audio.currentTime = 0; paint(); });
   play.addEventListener("click", () => void (audio.paused ? audio.play() : audio.pause()));
   const seek = (clientX: number) => {
     const rect = canvas.getBoundingClientRect();
@@ -108,8 +115,22 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
   }
   name.addEventListener("change", () => void save({ name: name.value.trim() || idea.name }));
   note.addEventListener("change", () => void save({ note: note.value.trim() }));
-  key.addEventListener("change", () => void save({ key: key.value.trim() || undefined }));
-  bpm.addEventListener("change", () => void save({ bpm: Number(bpm.value) > 0 ? Math.round(Number(bpm.value)) : undefined }));
+  key.addEventListener("change", () => { along.key = parseKey(key.value); if (audio.paused === false) along.syncDrone(true); void save({ key: key.value.trim() || undefined }); });
+  bpm.addEventListener("change", () => { along.bpm = Number(bpm.value) > 0 ? Number(bpm.value) : 100; along.seek(audio.currentTime); void save({ bpm: Number(bpm.value) > 0 ? Math.round(Number(bpm.value)) : undefined }); });
+
+  // Play along: a click at the tempo, a quiet drone on the key.
+  const clickChip = el("button", { type: "button", class: "chip", "aria-pressed": "false", onclick: () => {
+    along.clickOn = !along.clickOn;
+    clickChip.setAttribute("aria-pressed", String(along.clickOn));
+    along.seek(audio.currentTime);
+  } }, "Click");
+  const droneChip = el("button", { type: "button", class: "chip", "aria-pressed": "false", onclick: () => {
+    if (!along.key) { status.textContent = "Set the key above first (for example A minor), then the drone can play it."; return; }
+    status.textContent = "";
+    along.setDrone(!along.droneOn);
+    droneChip.setAttribute("aria-pressed", String(along.droneOn));
+    along.syncDrone(!audio.paused);
+  } }, "Drone");
 
   // Mark: add a marker at the play head.
   const markButton = el("button", { type: "button", class: "chip", onclick: () => {
@@ -177,6 +198,23 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
     });
   }
 
+  function chooseBeat() {
+    const dialog = sheet("Add a beat", el("div", { class: "sheet-list" },
+      ...BEAT_STYLES.map((style) => el("button", { type: "button", class: "sheet-row", onclick: () => { dialog.close(); void addBeat(style); } }, style))),
+      el("p", { class: "sheet-note" }, `At ${idea.bpm ?? 100} BPM, from the start of the idea. Set the tempo above first if it's wrong. Saved as a new idea.`));
+  }
+
+  async function addBeat(style: BeatStyle) {
+    busy("Adding the beat…");
+    const { samples, rate } = readSamples(await (await readAudio(idea)).arrayBuffer());
+    const tempo = idea.bpm ?? 100;
+    const beat = renderBeat(style, tempo, samples.length / rate + 0.1, rate).map((v) => v * 0.55);
+    const made = await saveSamples(mixDown(samples, beat, 0, rate), rate, { name: `${idea.name} + ${style.toLowerCase()} beat`, key: idea.key, bpm: tempo, parent: idea.id });
+    busy("");
+    hooks.changed();
+    toast("Saved with the beat as a new idea.", { label: "Open", run: () => { close(); hooks.open(made); } });
+  }
+
   async function mixWithParent() {
     if (!idea.parent) return;
     const parent = await getIdea(idea.parent);
@@ -196,6 +234,7 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
 
   function close() {
     cancelAnimationFrame(raf);
+    along.close();
     audio.pause();
     if (url) URL.revokeObjectURL(url);
     dialog.close();
@@ -212,7 +251,7 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
     el("div", { class: "detail-body" },
       name, canvas, time,
       el("div", { class: "rec-actions", style: "gap:20px" }, play),
-      el("div", { class: "rec-toggles" }, markButton, loopButton),
+      el("div", { class: "rec-toggles" }, markButton, loopButton, clickChip, droneChip),
       speed,
       el("div", { class: "detail-two" }, key, bpm),
       note, status, notesBox,
@@ -220,6 +259,7 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
         action("Layer another take on top", "Plays this while you record, so use headphones", () => { close(); hooks.layer(idea); }),
         idea.parent ? action("Mix with the idea underneath", "Makes one new idea out of the two", () => void mixWithParent()) : null,
         action("Make it sound good", "Clean-up, level and a touch of room, as a new copy", () => void polish()),
+        action("Add a beat", "A scratch drum pattern at the idea's tempo, as a new idea", chooseBeat),
         action("Turn the melody into notes", "Hum a tune, get notes and a MIDI file", () => void findNotes()),
         isPhone() ? null : action("Send to MicFX DAW", "Opens the DAW with this as a track", () => void sendToDaw([idea]).then((a) => toast(a.message ?? (a.ok ? "Sent to MicFX DAW." : "MicFX DAW didn't take it.")))),
         action(isPhone() ? "Save for the computer" : "Share or save the audio", isPhone() ? "Share the file by AirDrop, Files or a cable, then open it in MicFX DAW" : "WAV file", () => void shareZip([idea])),
