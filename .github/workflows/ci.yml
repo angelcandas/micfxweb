@@ -14,7 +14,7 @@ jobs:
   web:
     name: Engine, type-check, build, tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Fetch the desktop core and JUCE
