@@ -41,7 +41,7 @@ app.append(
     el("button", { type: "button", class: "icon-btn", "aria-label": "Settings", onclick: () => void openSettings(recorder.settings, () => { if (recorder.state === "open" && !recorder.recording) { recorder.close(); void arm(); } }) }, "⚙")),
   main,
   el("nav", { class: "cap-tabs", role: "tablist", "aria-label": "Capture" }, tabs.record, tabs.ideas,
-    el("a", { class: "cap-tab", href: "./?live=1" }, el("b", { "aria-hidden": "true" }, "≋"), "Live & Practice")));
+    el("a", { class: "cap-tab", href: "./?live=1&practice=1" }, el("b", { "aria-hidden": "true" }, "♪"), "Practice")));
 
 /** The mic is allowed already: open it so the 2 s before a tap are kept. */
 async function arm() {

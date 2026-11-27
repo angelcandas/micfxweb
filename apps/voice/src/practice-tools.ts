@@ -2,6 +2,7 @@
 // - "Range": a short test for your lowest and highest comfortable notes; then each song
 //   offers the key that fits your voice ("Fits you: +2").
 // - "Warm-ups": scales, sirens and intervals made in any key, sung and scored like a song.
+import { stemSplitEnabled } from "./stems-client";
 import { PARTS, type Part } from "./harmony";
 import { heldNote, readRange, spanText, suggestShift, writeRange, type VoiceRange } from "./range";
 import { EXERCISES, TEMPOS, exerciseOf, makeWarmup, noteName, renderBacking, renderGuide, rootFor, type Tempo } from "./warmups";
@@ -78,6 +79,7 @@ export function addPracticeTools(host: PracticeToolsHost, startAudio: () => Prom
   refreshFit();
 
   addSplitTime(host);
+  if (!stemSplitEnabled()) addSongWords();
   rangeButton.addEventListener("click", () => openRange(host, startAudio, refreshFit));
   warmupButton.addEventListener("click", () => openWarmups(host));
 }
@@ -286,4 +288,12 @@ function addSplitTime(host: PracticeToolsHost) {
     const value = left ? (left.started ? `${durationText(left.seconds)} left` : `Splitting takes ${durationText(left.seconds)} here`) : "";
     if (time.textContent !== value) time.textContent = value;
   }, 500);
+}
+
+/** Without the stem split (too slow in a browser) a song plays as it is, with its voice taken down: say so. */
+function addSongWords() {
+  const open = document.querySelector<HTMLElement>(".practice-open");
+  if (open) open.title = "Choose a song: it plays as the backing with its voice taken down; its melody is shown to sing";
+  const text = document.querySelector<HTMLElement>(".practice-empty p:not(.big)");
+  if (text) text.textContent = "Open a song: it plays as the backing with its centred voice taken down (the original sits under it as a quiet guide you can turn up or off), and its melody is turned into notes to sing. Sing in any octave; each note turns green when you're within a quarter of a semitone.";
 }

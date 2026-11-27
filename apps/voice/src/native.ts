@@ -10,7 +10,7 @@ import type { LiveAudio, LiveMeters, TransportState } from "./audio";
 import { createAudioSettings, savedInput, savedOutput } from "./devices";
 import { createLibrary } from "./library";
 import { Tracks, decodeChannels, encodeWav, download, songFiles } from "./tracks";
-import { splitVoice } from "./stems-client";
+import { splitVoice, stemSplitEnabled } from "./stems-client";
 import { Setlist } from "./setlist";
 import { SoundCheck } from "./sound-check";
 import { findMelody, pageAnalysis, songSections, soundCheckPlan, warpAudio } from "./analysis-client";
@@ -324,6 +324,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
     store: opfsStore(),
     scorer: pageAnalysis,
     decode: decodeChannels,
+    splitEnabled: stemSplitEnabled(),
     split: splitVoice,
     encodeWav,
     findMelody,

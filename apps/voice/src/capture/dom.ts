@@ -1,5 +1,5 @@
 // A few helpers for building the Capture screens.
-type Child = Node | string | null | undefined | false;
+export type Child = Node | string | null | undefined | false;
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);

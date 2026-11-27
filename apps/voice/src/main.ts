@@ -87,6 +87,8 @@ async function boot() {
   // Opened by MicFX DAW with its mix to sing over.
   void native.web.restored.then(() => takeFromDaw(handoff));
   openSharedSound(native.web);
+  // "?practice=1" (Capture's Practice tab) opens straight on Practice.
+  if (/[?&]practice=1\b/.test(location.search)) document.querySelector<HTMLElement>(".practice-toggle")?.click();
   addEventListener("hashchange", () => openSharedSound(native.web));
   // Keeps the app's files so it opens and plays offline (production builds only).
   if (import.meta.env.PROD) registerOffline(() => native.web.busy());

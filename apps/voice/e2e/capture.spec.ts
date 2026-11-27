@@ -207,3 +207,36 @@ test("play along with a click and a drone, and add a beat", async ({ page, conte
   await expect(page.locator("article.idea")).toHaveCount(2);
   await expect(page.locator("article.idea").first()).toContainText("beat");
 });
+
+test("an idea is heard through a Live sound first and kept only if wanted", async ({ page, context }) => {
+  test.setTimeout(120_000);
+  await context.grantPermissions(["microphone"]);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await ready(page);
+  await recordOne(page);
+  await page.getByRole("tab", { name: /Ideas/ }).click();
+  await page.locator("article.idea .idea-name").click();
+  const detail = page.locator("dialog.detail");
+  await detail.getByRole("button", { name: /Try a sound/ }).click();
+  const sounds = page.getByRole("dialog", { name: "Try a sound" });
+  await expect(sounds.locator(".sheet-row").first()).toBeVisible({ timeout: 30_000 });
+  const first = await sounds.locator(".sheet-row span").first().innerText();
+  await sounds.locator(".sheet-row").first().click();
+  const heard = page.getByRole("dialog", { name: first });
+  await expect(heard.getByText("Keep as a new idea")).toBeVisible({ timeout: 30_000 });
+  await heard.getByText("Keep as a new idea").click();
+  await expect(page.getByText(/Kept as a new idea/)).toBeVisible();
+  await detail.getByRole("button", { name: "Back" }).click();
+  await expect(page.locator("article.idea")).toHaveCount(2);
+  expect(errors).toEqual([]);
+});
+
+test("the Practice tab opens Practice, and a song there plays as it is with its voice taken down", async ({ page }) => {
+  test.setTimeout(60_000);
+  await ready(page);
+  await page.getByRole("link", { name: /Practice/ }).first().click();
+  await expect(page).toHaveURL(/practice=1/);
+  await expect(page.locator(".practice-bar")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(".practice-empty")).toContainText("voice taken down");
+});

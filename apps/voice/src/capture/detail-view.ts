@@ -2,11 +2,13 @@ import { findMelody } from "../analysis-client";
 import { engineModule } from "./analyze";
 import { fileName, shareFile, shareIdea } from "./actions";
 import { BEAT_STYLES, renderBeat, type BeatStyle } from "./beat";
-import { drawBars, el, formatTime, sheet, toast } from "./dom";
+import { drawBars, el, formatTime, sheet, toast, type Child } from "./dom";
 import { PlayAlong, parseKey } from "./playalong";
 import { saveSamples, mixDown, resample } from "./make-idea";
 import { notesToMidi, parseMelody, type Note } from "./midi";
 import PolishWorker from "./polish-worker?worker";
+import SoundWorker from "./sound-worker?worker";
+import type { SoundReply } from "./sound-worker";
 import type { PolishReply } from "./polish-worker";
 import { isPhone, sendToDaw, shareZip } from "./transfer";
 import { getIdea, readAudio, saveIdea, type Idea } from "./store";
@@ -162,6 +164,80 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
     }
   }
 
+
+  // Try a sound: the idea through one of the Live screen's factory sounds, heard first and kept if wanted.
+  function askSound(request: Record<string, unknown>, transfer: Transferable[] = []) {
+    const worker = new SoundWorker();
+    return new Promise<SoundReply>((resolve) => {
+      worker.onmessage = (event: MessageEvent<SoundReply>) => { worker.terminate(); resolve(event.data); };
+      worker.onerror = () => { worker.terminate(); resolve({ error: "the effects stopped" }); };
+      worker.postMessage(request, transfer);
+    });
+  }
+
+  async function chooseSound() {
+    busy("Loading the sounds…");
+    try {
+      const reply = await askSound({ kind: "list", module: await engineModule() });
+      busy("");
+      if (!("presets" in reply)) throw new Error("error" in reply ? reply.error : "no sounds");
+      const rows: Child[] = [];
+      let category = "";
+      reply.presets.forEach((preset, index) => {
+        if (preset.category !== category) {
+          category = preset.category;
+          rows.push(el("h3", { class: "sheet-group" }, category));
+        }
+        rows.push(el("button", { type: "button", class: "sheet-row", onclick: () => { picker.close(); void hearSound(index, preset.name); } }, el("span", {}, preset.name), el("span", {}, "›")));
+      });
+      const picker = sheet("Try a sound", el("div", { class: "sheet-list" }, ...rows),
+        el("p", { class: "sheet-note" }, "Your idea through one of the Live screen's sounds. You hear it first and keep it only if you like it."));
+    } catch (error) {
+      busy(`Couldn't load the sounds: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async function hearSound(preset: number, label: string) {
+    busy(`Trying ${label}…`);
+    try {
+      const { samples, rate } = readSamples(await (await readAudio(idea)).arrayBuffer());
+      const reply = await askSound({ kind: "render", module: await engineModule(), samples, rate, preset }, [samples.buffer]);
+      if (!("samples" in reply)) throw new Error("error" in reply ? reply.error : "nothing came back");
+      busy("");
+      audio.pause();
+      const context = new AudioContext();
+      const buffer = context.createBuffer(1, reply.samples.length, rate);
+      buffer.copyToChannel(new Float32Array(reply.samples), 0);
+      let source: AudioBufferSourceNode | undefined;
+      const status2 = el("p", { class: "sheet-note" }, "Playing…");
+      const stop = () => { try { source?.stop(); } catch { /* already over */ } };
+      const play = () => {
+        stop();
+        void context.resume();
+        source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.onended = () => { status2.textContent = "Done. Play it again, keep it, or go back and try another."; };
+        status2.textContent = "Playing…";
+        source.start();
+      };
+      const preview = sheet(`${label}`, status2,
+        el("div", { class: "sheet-list" },
+          el("button", { type: "button", class: "sheet-row", onclick: play }, el("span", {}, "Play again"), el("span", {}, "▶")),
+          el("button", { type: "button", class: "sheet-row", onclick: async () => {
+            const made = await saveSamples(reply.samples, rate, { name: `${idea.name} · ${label}`, note: idea.note, parent: idea.id, key: idea.key, bpm: idea.bpm });
+            preview.close();
+            hooks.changed();
+            toast(`Kept as a new idea. Your original is untouched.`, { label: "Open", run: () => { close(); hooks.open(made); } });
+          } }, el("span", {}, "Keep as a new idea"), el("span", {}, "＋")),
+          el("button", { type: "button", class: "sheet-row", onclick: () => { preview.close(); void chooseSound(); } }, el("span", {}, "Try another sound"), el("span", {}, "›"))));
+      preview.addEventListener("close", () => { stop(); void context.close(); });
+      play();
+    } catch (error) {
+      busy(`Couldn't try ${label}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async function findNotes() {
     busy("Listening for the melody…");
     try {
@@ -258,6 +334,7 @@ export function openDetail(start: Idea, hooks: DetailHooks): void {
       el("div", { class: "sheet-list" },
         action("Layer another take on top", "Plays this while you record, so use headphones", () => { close(); hooks.layer(idea); }),
         idea.parent ? action("Mix with the idea underneath", "Makes one new idea out of the two", () => void mixWithParent()) : null,
+        action("Try a sound", "Hear this idea through the Live screen's sounds: radio, studio, and more", () => void chooseSound()),
         action("Make it sound good", "Clean-up, level and a touch of room, as a new copy", () => void polish()),
         action("Add a beat", "A scratch drum pattern at the idea's tempo, as a new idea", chooseBeat),
         action("Turn the melody into notes", "Hum a tune, get notes and a MIDI file", () => void findNotes()),

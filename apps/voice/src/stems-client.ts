@@ -138,3 +138,17 @@ export async function splitVoice(song: Stereo, report: (phase: SplitPhase, progr
   for (const stem of [drums, bass, other]) for (let ch = 0; ch < 2; ++ch) for (let i = 0; i < total; ++i) backing[ch]![i]! += stem[ch]![i]!;
   return { voice: vocals, backing };
 }
+
+/**
+ * Splitting a song into stems takes about 14 minutes in a browser, so it is off here: a song plays as it is,
+ * with its voice taken down. "?split=1" (kept for next time as micfx.stemSplit) turns it back on.
+ */
+export function stemSplitEnabled(): boolean {
+  try {
+    if (/[?&]split=1\b/.test(location.search)) localStorage.setItem("micfx.stemSplit", "1");
+    if (/[?&]split=0\b/.test(location.search)) localStorage.removeItem("micfx.stemSplit");
+    return localStorage.getItem("micfx.stemSplit") === "1";
+  } catch {
+    return false;
+  }
+}
