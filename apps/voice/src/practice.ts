@@ -8,6 +8,7 @@
 // (analysis.wasm on the page), and the page hears back on the desktop's events.
 import type { PracticeLyrics, PracticeScores, PracticeSong, SongSection } from "@micfx/engine/analysis";
 import { historyFile, partMelody, type Part } from "./harmony";
+import { annotate, EDITED, LABELS, libraryFrom, libraryToKeep, cleanLabel, melodyText, parseAnnotations, snapStart, type Annotation, type Label } from "./practice-labels";
 import { addPass, parsePasses, passFrom, type Pass } from "./practice-history";
 
 /** How the analysis on the page scores (Analysis from @micfx/engine/analysis). */
@@ -79,7 +80,7 @@ interface Info {
 }
 
 type Phase = "reading" | "downloading" | "loading" | "splitting" | "listening";
-const AUDIO = "audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a";
+const AUDIO = "audio/*,video/mp4,video/quicktime,video/webm,.wav,.aif,.aiff,.flac,.ogg,.opus,.mp3,.m4a,.aac,.mp4,.m4v,.mov,.webm";
 const RATE = 44100; // the desktop's (the stem model's)
 const MELODY = "melody.txt";
 const GUIDE = "guide.wav";
@@ -134,6 +135,10 @@ interface Current {
   /** The melody as it is (song: as it plays, in another key or speed). */
   base: PracticeSong;
   sections: SongSection[] | "finding" | null;
+  /** The coach's cues on notes and phrases (times in the song as recorded). */
+  annotations: Annotation[];
+  /** The notes were changed by hand (melody-edited.txt). */
+  edited: boolean;
 }
 
 interface Shift {
@@ -171,12 +176,17 @@ export class Practice {
   private trail: number[] = [];
   /** The part sung: the melody, or a harmony a third above or below it (duet mode). */
   private part: Part = "lead";
+  /** The passes sung on this song, newest last, for the take review. */
+  private takes: Take[] = [];
+  /** The reusable cues (null: the defaults, until one is saved). */
+  private labelLibrary: Label[] | null = null;
   /** Who hears each pitch reading (the range finder): MIDI, 0 where none. */
   private pitchListeners = new Set<(midi: number) => void>();
 
   constructor(private readonly host: PracticeHost) {
     try {
-      const saved = JSON.parse(host.load() ?? "null") as { guideLevel?: number } | null;
+      const saved = JSON.parse(host.load() ?? "null") as { guideLevel?: number; labelLibrary?: unknown } | null;
+      if (Array.isArray(saved?.labelLibrary)) this.labelLibrary = libraryFrom(saved.labelLibrary);
       if (typeof saved?.[SAVED_KEY_LEVEL] === "number") this.guideLevel = Math.min(1.5, Math.max(0, saved.guideLevel));
     } catch {
       // the defaults
@@ -293,6 +303,30 @@ export class Practice {
         const by = typeof options.at === "number" ? options.at * this.shift.speed - line.start : (Number(options.by) || 0) * this.shift.speed;
         return this.setLyrics(this.scorer.lyricsNudge(index, by), false);
       }
+      case "labels":
+        return { library: this.labelLibrary ?? libraryFrom(undefined), annotations: this.describeAnnotations() };
+      case "saveLabels": {
+        this.labelLibrary = options.reset ? null : libraryToKeep(options.library);
+        this.persist();
+        return this.labelLibrary ?? libraryFrom(undefined);
+      }
+      case "annotate":
+        return this.annotate(options);
+      case "setMelody":
+        return this.setMelody(options.notes);
+      case "resetMelody":
+        return this.resetMelody();
+      case "takes":
+        return this.takes.map(({ id, name, start, seconds, speed, semitones }) => ({ id, name, start, seconds, speed, semitones, muted: false }));
+      case "review": {
+        // (the pitch you sang, kept with the scores it earned: no recording is kept in the browser)
+        const take = this.takes.find((t) => t.id === Number(options.id)) ?? this.takes.at(-1);
+        if (!take) this.host.emit("practice", { state: "review", review: null, error: "Sing the song through first, then review it here." });
+        else this.host.emit("practice", { state: "review", review: reviewOf(take) });
+        return null;
+      }
+      case "stopReview":
+        return null;
       case "sections":
         void this.findSections();
         break;
@@ -674,6 +708,63 @@ export class Practice {
     }
   }
 
+  /** The labels in the song as it plays (a speed change moves them). */
+  private describeAnnotations() {
+    const speed = this.shift.speed;
+    return (this.current?.annotations ?? []).map((a) => ({ kind: a.kind, time: round3(a.time / speed), labels: a.labels }));
+  }
+
+  private async annotate(options: Record<string, unknown>) {
+    const current = this.current;
+    if (!current) return null;
+    const kind = options.kind === "phrase" ? "phrase" : "note";
+    const labels = (Array.isArray(options.labels) ? options.labels : []).map(cleanLabel).filter((l): l is Label => Boolean(l));
+    const time = snapStart(kind, Number(options.time) * this.shift.speed, current.base.notes, current.base.phrases);
+    if (time === undefined) return null;
+    current.annotations = annotate(current.annotations, kind, time, labels);
+    await this.host.store.write(current.folder, LABELS, JSON.stringify(current.annotations)).catch(() => {});
+    this.host.emit("practice", { state: "annotations", annotations: this.describeAnnotations() });
+    return null;
+  }
+
+  /** The notes to sing were changed by hand: kept beside the found ones, and the song goes on from here. */
+  private async setMelody(flat: unknown) {
+    const current = this.current;
+    const text = melodyText(flat);
+    if (!current || !this.scorer) return { ok: false };
+    if (!text) return { ok: false, error: "The song needs at least one note to sing." };
+    await this.host.store.write(current.folder, EDITED, text).catch(() => {});
+    return this.useMelody(current, text, true);
+  }
+
+  private async resetMelody() {
+    const current = this.current;
+    if (!current || !this.scorer) return null;
+    const found = await (await this.host.store.read(current.folder, MELODY))?.text().catch(() => "");
+    if (!found?.trim()) return null;
+    await this.host.store.write(current.folder, EDITED, "").catch(() => {});
+    return this.useMelody(current, found, false);
+  }
+
+  private async useMelody(current: Current, melody: string, edited: boolean) {
+    const scorer = this.scorer!;
+    const position = Math.max(0, this.lastSongTime);
+    if (this.loopState) {
+      this.loopState = undefined;
+      this.host.loop();
+    }
+    current.melody = melody;
+    current.edited = edited;
+    current.base = scorer.scoreSong(partMelody(melody, current.info.key, this.part));
+    current.song = this.shift.speed !== 1 || this.shift.semitones !== 0 ? scorer.scoreShift(this.shift.semitones, this.shift.speed, position) : current.base;
+    // The lyrics sit on the new notes.
+    const kept = await (await this.host.store.read(current.folder, LYRICS))?.text().catch(() => "");
+    if (kept) current.lyrics = scorer.lyricsSet(kept, true).lines;
+    this.restartFrom(position);
+    this.host.emit("practice", { state: "ready", song: this.describeSong(), fromCache: true, quiet: true });
+    return { song: this.describeSong() };
+  }
+
   private async setCurrent(folder: string, info: Info, melody: string, guideId: number | undefined, part: Part = "lead") {
     this.scorer ??= await this.host.scorer();
     this.part = part;
@@ -688,9 +779,12 @@ export class Practice {
     } catch {
       // found again when asked
     }
-    this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections };
+    const annotations = parseAnnotations(await (await this.host.store.read(folder, LABELS))?.text().catch(() => undefined));
+    const edited = Boolean((await (await this.host.store.read(folder, EDITED))?.text().catch(() => ""))?.trim());
+    this.current = { folder, info, melody, song, base: song, guideId, lyrics: lyrics?.lines ?? [], sections, annotations, edited };
     this.trail = [];
     this.passes = parsePasses(await (await this.host.store.read(folder, historyFile(part)))?.text().catch(() => undefined));
+    this.takes = parseTakes(await (await this.host.store.read(folder, takesFile(part)))?.text().catch(() => undefined));
     this.shift = { speed: 1, semitones: 0 };
     this.pending = undefined;
     this.shiftToken++;
@@ -715,7 +809,9 @@ export class Practice {
     const [infoBlob, melodyBlob] = await Promise.all([this.host.store.read(folder, INFO), this.host.store.read(folder, MELODY)]);
     if (!infoBlob || !melodyBlob) return undefined;
     const info = JSON.parse(await infoBlob.text()) as Info;
-    const melody = await melodyBlob.text();
+    // (notes changed by hand stand in for the found ones)
+    const edited = (await (await this.host.store.read(folder, EDITED))?.text().catch(() => ""))?.trim();
+    const melody = edited || (await melodyBlob.text());
     return info.name && melody.trim() ? { info, melody } : undefined;
   }
 
@@ -725,8 +821,12 @@ export class Practice {
       const loaded = await this.loadFolder(folder).catch(() => undefined);
       if (!loaded) continue;
       const { info } = loaded;
+      const passes = parsePasses(await (await this.host.store.read(folder, historyFile("lead")))?.text().catch(() => undefined));
       entries.push({
         id: folder,
+        best: passes.length ? Math.max(...passes.map((p) => p.score)) : 0,
+        last: passes.at(-1)?.score ?? 0,
+        passes: passes.length,
         name: info.name,
         key: info.key,
         seconds: info.seconds,
@@ -747,6 +847,8 @@ export class Practice {
       ...current.song,
       hasBacking: Boolean(current.info.backing),
       part: this.part,
+      edited: current.edited,
+      annotations: this.describeAnnotations(),
       key: current.info.key,
       shift: this.describeShift(),
       lyrics: this.describeLyrics(),
@@ -769,6 +871,37 @@ export class Practice {
     if (!current || !pass) return;
     this.passes = addPass(this.passes, pass);
     void this.host.store.write(current.folder, historyFile(this.part), JSON.stringify(this.passes)).catch(() => {});
+    this.keepTake(pass, report);
+  }
+
+  /** The pass kept for the take review: its pitch, the notes it was sung against and their scores. */
+  private keepTake(pass: Pass, report: Record<string, unknown>) {
+    const current = this.current;
+    const scores = this.scorer?.scoreChanges(true);
+    if (!current || !scores || this.trail.length < 4) return;
+    const first = this.trail[0]!;
+    const last = this.trail.at(-2)!;
+    const id = (this.takes.at(-1)?.id ?? 0) + 1;
+    const take: Take = {
+      id,
+      name: `Recording ${id}`,
+      at: pass.at,
+      start: round3(first),
+      seconds: round3(last - first),
+      speed: this.shift.speed,
+      semitones: this.shift.semitones,
+      notes: [...current.song.notes],
+      phrases: [...current.song.phrases],
+      frames: [...this.trail],
+      score: pass.score,
+      lean: typeof report.lean === "number" ? report.lean : 0,
+      noteScores: scores.notes,
+      phraseScores: scores.phrases,
+      lowest: current.song.lowest,
+      highest: current.song.highest,
+    };
+    this.takes = [...this.takes, take].slice(-MAX_TAKES);
+    void this.host.store.write(current.folder, takesFile(this.part), JSON.stringify(this.takes)).catch(() => {});
   }
 
   /** The time a song's split takes (before it starts) or has left (while it runs). */
@@ -801,6 +934,7 @@ export class Practice {
     const kept = await (await this.host.store.read(current.folder, LYRICS))?.text().catch(() => "");
     if (kept) current.lyrics = this.scorer.lyricsSet(kept, true).lines;
     this.passes = parsePasses(await (await this.host.store.read(current.folder, historyFile(part)))?.text().catch(() => undefined));
+    this.takes = parseTakes(await (await this.host.store.read(current.folder, takesFile(part)))?.text().catch(() => undefined));
     this.trail = [];
     if (this.loopState) this.applyLoop(false);
     this.restartFrom(position);
@@ -871,7 +1005,7 @@ export class Practice {
   }
 
   private persist() {
-    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1, shift: this.shift, part: this.part }));
+    this.host.save(JSON.stringify({ guideLevel: this.guideLevel, folder: this.current?.folder ?? "", guideId: this.current?.guideId ?? -1, shift: this.shift, part: this.part, labelLibrary: this.labelLibrary ?? undefined }));
   }
 
   private now() {
@@ -885,6 +1019,57 @@ function mono(channels: Float32Array[]): Float32Array {
   const out = new Float32Array(channels[0]!.length);
   for (const channel of channels) for (let i = 0; i < out.length; ++i) out[i]! += channel[i]! / channels.length;
   return out;
+}
+
+/** A pass kept for the take review (the desktop's recordings, without the audio). */
+interface Take {
+  id: number;
+  name: string;
+  at: number;
+  start: number;
+  seconds: number;
+  speed: number;
+  semitones: number;
+  notes: number[];
+  phrases: number[];
+  frames: number[];
+  score: number;
+  lean: number;
+  noteScores: Record<string, number | boolean>[];
+  phraseScores: Record<string, number | boolean>[];
+  lowest: number;
+  highest: number;
+}
+
+const MAX_TAKES = 8;
+const takesFile = (part: Part) => (part === "lead" ? "takes.json" : `takes-${part}.json`);
+
+function parseTakes(text: string | undefined): Take[] {
+  try {
+    const list = JSON.parse(text ?? "[]") as unknown;
+    return Array.isArray(list) ? list.filter((t): t is Take => typeof t?.id === "number" && Array.isArray(t.frames) && Array.isArray(t.notes)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** What the page's take review shows (the desktop's describeReview). */
+function reviewOf(take: Take) {
+  return {
+    take: take.id,
+    name: take.name,
+    start: Math.max(0, round3(take.start - 1)),
+    end: round3(take.start + take.seconds + 1),
+    notes: take.notes,
+    phrases: take.phrases,
+    frames: take.frames,
+    score: take.score,
+    lean: take.lean,
+    noteScores: take.noteScores,
+    phraseScores: take.phraseScores,
+    lowest: take.lowest,
+    highest: take.highest,
+  };
 }
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;

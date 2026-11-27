@@ -122,7 +122,7 @@ describe("practice", () => {
     const id = `${await fileId(voice)}-voice`;
     expect(id).toMatch(/^[0-9a-f]{20}-voice$/);
     expect([...t.store.files.keys()].sort()).toEqual([`${id}/My Song.wav`, `${id}/info.json`, `${id}/melody.txt`]);
-    expect(await t.practice.handle("library")).toEqual([{ id, name: "My Song", key: "A minor", seconds: 20, voiceOnly: true, opened: 1000, current: true }]);
+    expect(await t.practice.handle("library")).toEqual([{ id, name: "My Song", key: "A minor", seconds: 20, voiceOnly: true, opened: 1000, current: true, best: 0, last: 0, passes: 0 }]);
 
     // The same file again: from the library, no analysis.
     t.events.length = 0;
@@ -255,5 +255,85 @@ describe("practice", () => {
     t.events.length = 0;
     await again.restore();
     expect(t.events[0]?.[1]).toMatchObject({ state: "ready", quiet: true, song: { name: "Song" } });
+  });
+
+  it("keeps labels on notes (snapped, in the song as recorded) and a reusable library", async () => {
+    const t = setup();
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
+    const first = (await t.practice.handle("labels")) as any;
+    expect(first.library.length).toBeGreaterThan(8);
+    expect(first.annotations).toEqual([]);
+
+    const grit = first.library[0];
+    t.events.length = 0;
+    await t.practice.handle("annotate", { kind: "note", time: 1.02, labels: [grit] });
+    expect(t.events.at(-1)![1]).toMatchObject({ state: "annotations", annotations: [{ kind: "note", time: 1, labels: [{ text: "Grit" }] }] });
+    await t.practice.handle("annotate", { kind: "note", time: 1.5, labels: [grit] }); // between notes: nothing
+    expect(((await t.practice.handle("labels")) as any).annotations).toHaveLength(1);
+
+    // It's kept: the song opened again has it.
+    const reload = new Practice(t.host);
+    await reload.restore();
+    expect(((await reload.handle("labels")) as any).annotations.length).toBe(1);
+
+    const saved = (await t.practice.handle("saveLabels", { library: [{ text: "Twang", icon: "~", colour: "nope" }] })) as any[];
+    expect(saved).toMatchObject([{ text: "Twang", icon: "~", colour: "#8c7bff" }]);
+    expect(saved[0].id).toMatch(/^[0-9a-f]{8}$/);
+    expect(((await new Practice(t.host).handle("labels")) as any).library).toMatchObject([{ text: "Twang" }]);
+    expect(((await t.practice.handle("saveLabels", { reset: true })) as any[]).length).toBeGreaterThan(8);
+  });
+
+  it("edits the notes, keeps the edit beside the found ones, and can put them back", async () => {
+    const t = setup("found");
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
+    const folder = [...t.store.files.keys()][0]!.split("/")[0]!;
+
+    expect(await t.practice.handle("setMelody", { notes: [] })).toMatchObject({ ok: false });
+    const edited = (await t.practice.handle("setMelody", { notes: [1, 2, 64, 0, 0.5, 70] })) as any;
+    expect(edited.song.edited).toBe(true);
+    expect(await (await t.store.read(folder, "melody-edited.txt"))!.text()).toBe("0.000 0.500 70.00\n1.000 2.000 64.00\n");
+    expect(await (await t.store.read(folder, "melody.txt"))!.text()).toBe("found");
+    expect(((await t.practice.handle("library")) as any[])[0].id).toBe(folder);
+
+    const reload = new Practice(t.host);
+    await reload.restore();
+    expect(t.events.at(-1)![1]).toMatchObject({ state: "ready", song: { edited: true } });
+
+    const back = (await t.practice.handle("resetMelody")) as any;
+    expect(back.song.edited).toBe(false);
+  });
+
+  it("keeps each whole pass for the take review: its pitch and what it scored", async () => {
+    const t = setup();
+    t.pick(new File(["voice"], "Song.wav"));
+    await t.practice.handle("open", { split: false });
+    await t.waitFor("ready");
+    expect(await t.practice.handle("takes")).toEqual([]);
+    t.events.length = 0;
+    await t.practice.handle("review", { id: 1 });
+    expect(t.events[0]![1]).toMatchObject({ state: "review", review: null });
+
+    // Sing a few seconds, then stop: a pass.
+    await t.practice.handle("view", { open: true });
+    (await t.host.scorer()).scoreReport = () => ({ score: 80, lean: -4, scored: 1, total: 1 });
+    const pitch = (seconds: number[], midi: number) => Float64Array.from(seconds.flatMap((s) => [s * 44100, midi, -20]));
+    t.practice.tick(pitch([0.5, 0.6, 0.7, 0.8], 60), { position: 0.9, playing: true }, 44100);
+    t.practice.tick(undefined, { position: 0.9, playing: false }, 44100);
+    const takes = (await t.practice.handle("takes")) as any[];
+    expect(takes).toMatchObject([{ id: 1, name: "Recording 1", speed: 1, semitones: 0, muted: false }]);
+
+    t.events.length = 0;
+    await t.practice.handle("review", { id: 1 });
+    expect(t.events[0]![1].review).toMatchObject({ take: 1, name: "Recording 1", notes: [0, 1, 60, 0, 1, 2, 62, 0], score: 80 });
+    expect(t.events[0]![1].review.frames.length).toBeGreaterThanOrEqual(4);
+
+    // Kept: the same song opened again has it.
+    const reload = new Practice(t.host);
+    await reload.restore();
+    expect(((await reload.handle("takes")) as any[]).length).toBe(1);
   });
 });

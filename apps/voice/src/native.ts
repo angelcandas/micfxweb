@@ -288,7 +288,7 @@ export function createNative({ shadow, audio, parameters }: { shadow: LiveEngine
       }
     }
     if (action === "chooseBacking" && setlist.song(index)) {
-      const file = await pickFile("audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a");
+      const file = await pickFile("audio/*,video/mp4,video/quicktime,video/webm,.wav,.aif,.aiff,.flac,.ogg,.opus,.mp3,.m4a,.aac,.mp4,.m4v,.mov,.webm");
       if (file) await setlist.setBacking(index, file);
     }
     if (action === "chooseLyrics" && setlist.song(index)) {

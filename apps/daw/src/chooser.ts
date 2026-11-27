@@ -18,10 +18,50 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ""
   return node;
 }
 
+// What the engine reads itself. Any other audio (MP4 and M4A, AAC, Opus, WebM, MP3, the audio of a
+// video...) is decoded by the browser and stored as a WAV.
+const engineReads = /\.(wav|aiff?|flac|ogg)$/i;
+const browserDecodes = /\.(mp3|m4a|mp4|m4v|mov|aac|opus|oga|webm|mkv|3gp|caf|wma)$/i;
+
+function wavBlob(channels: Float32Array[], rate: number): Blob {
+  const frames = channels[0]!.length;
+  const bytes = new DataView(new ArrayBuffer(44 + frames * channels.length * 3));
+  const text = (at: number, value: string) => [...value].forEach((c, i) => bytes.setUint8(at + i, c.charCodeAt(0)));
+  text(0, "RIFF"); bytes.setUint32(4, bytes.byteLength - 8, true); text(8, "WAVEfmt ");
+  bytes.setUint32(16, 16, true); bytes.setUint16(20, 1, true); bytes.setUint16(22, channels.length, true);
+  bytes.setUint32(24, rate, true); bytes.setUint32(28, rate * channels.length * 3, true);
+  bytes.setUint16(32, channels.length * 3, true); bytes.setUint16(34, 24, true);
+  text(36, "data"); bytes.setUint32(40, frames * channels.length * 3, true);
+  let at = 44;
+  for (let i = 0; i < frames; ++i)
+    for (const channel of channels) {
+      const v = Math.round(Math.max(-1, Math.min(1, channel[i]!)) * 8388607);
+      bytes.setUint8(at, v & 255); bytes.setUint8(at + 1, (v >> 8) & 255); bytes.setUint8(at + 2, (v >> 16) & 255);
+      at += 3;
+    }
+  return new Blob([bytes]);
+}
+
+/** The file as something the engine can open: a WAV for the formats only the browser decodes. */
+export async function toEngineFormat(file: File): Promise<File> {
+  if (engineReads.test(file.name) || !browserDecodes.test(file.name)) return file;
+  try {
+    const context = new OfflineAudioContext(1, 1, 48000);
+    const buffer = await context.decodeAudioData(await file.arrayBuffer());
+    const channels = Array.from({ length: Math.min(2, buffer.numberOfChannels) }, (_, c) => buffer.getChannelData(c));
+    if (!channels.length || !channels[0]!.length) return file;
+    return new File([wavBlob(channels, buffer.sampleRate)], file.name.replace(/\.[^.]*$/, "") + ".wav", { type: "audio/wav" });
+  } catch {
+    return file; // the engine says it can't open it
+  }
+}
+
 /** Copies files from the computer into the browser's storage: their paths there. */
-export async function importFiles(engine: DawEngine, files: File[], folder = `${engine.home}/Music/Imported`): Promise<string[]> {
+export async function importFiles(engine: DawEngine, inputs: File[], folder = `${engine.home}/Music/Imported`): Promise<string[]> {
   const existing = new Set((await engine.list(folder)).map((e) => e.name));
   const paths: string[] = [];
+  const files: File[] = [];
+  for (const input of inputs) files.push(await toEngineFormat(input));
   for (const file of files) {
     let name = file.name.replace(/[/\\]/g, "_");
     const dot = name.lastIndexOf(".");
