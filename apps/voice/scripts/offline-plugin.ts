@@ -63,11 +63,27 @@ self.addEventListener("activate", (event) => {
 // always match), and from the network for anything the cache doesn't hold.
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+  // Audio shared to MicFX from another app (the manifest's share_target): kept for Capture, which imports it.
+  if (request.method === "POST" && new URL(request.url).pathname.endsWith("/share-target")) {
+    event.respondWith((async () => {
+      const form = await request.formData();
+      const shared = await caches.open("micfx-shared");
+      let count = 0;
+      for (const file of form.getAll("audio")) {
+        if (typeof file === "string") continue;
+        await shared.put(new URL("shared/" + count++ + "/" + encodeURIComponent(file.name), self.registration.scope).href, new Response(file, { headers: { "content-type": file.type || "audio/mpeg" } }));
+      }
+      return Response.redirect(new URL("capture.html?shared=" + count, self.registration.scope).href, 303);
+    })());
+    return;
+  }
   if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
   if (request.mode === "navigate") {
     const path = new URL(request.url).pathname;
     const scope = new URL(self.registration.scope).pathname;
     if (path === scope || path === scope + "index.html") event.respondWith(caches.open(CACHE).then((cache) => cache.match("./")).then((hit) => hit ?? fetch(request)));
+    // The other pages of the build (Capture): from the cache too, so they open offline.
+    else if (path.startsWith(scope) && path.endsWith(".html")) event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((hit) => hit ?? fetch(request)));
     return;
   }
   event.respondWith(caches.open(CACHE).then((cache) => cache.match(request, { ignoreSearch: true })).then((hit) => hit ?? fetch(request)));
