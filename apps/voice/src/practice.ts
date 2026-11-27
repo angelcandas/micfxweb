@@ -9,6 +9,7 @@
 import type { PracticeLyrics, PracticeScores, PracticeSong, SongSection } from "@micfx/engine/analysis";
 import { historyFile, partMelody, type Part } from "./harmony";
 import { annotate, EDITED, LABELS, libraryFrom, libraryToKeep, cleanLabel, melodyText, parseAnnotations, snapStart, type Annotation, type Label } from "./practice-labels";
+import { reduceVoice } from "./vocal-reduce";
 import { addPass, parsePasses, passFrom, type Pass } from "./practice-history";
 
 /** How the analysis on the page scores (Analysis from @micfx/engine/analysis). */
@@ -38,6 +39,8 @@ export interface PracticeHost {
   scorer(): Promise<PracticeScorer>;
   /** The song's audio at `rate`: one or two channels. */
   decode(file: Blob, rate: number): Promise<Float32Array[]>;
+  /** False where splitting a song into stems is too slow (browsers, phones): a song then plays as it is, with its voice taken down. */
+  splitEnabled?: boolean;
   /** The voice and the rest of a stereo song at 44.1 kHz (the stem splitter). Throws an AbortError when cancelled. */
   split(song: [Float32Array, Float32Array], report: (phase: "downloading" | "loading" | "splitting", progress: number) => void, cancelled: () => boolean): Promise<{ voice: [Float32Array, Float32Array]; backing: [Float32Array, Float32Array] }>;
   encodeWav(channels: Float32Array[], rate: number): Blob;
@@ -79,6 +82,7 @@ interface Info {
   backing: string;
 }
 
+type PrepareMode = "split" | "song" | "voice";
 type Phase = "reading" | "downloading" | "loading" | "splitting" | "listening";
 const AUDIO = "audio/*,video/mp4,video/quicktime,video/webm,.wav,.aif,.aiff,.flac,.ogg,.opus,.mp3,.m4a,.aac,.mp4,.m4v,.mov,.webm";
 const RATE = 44100; // the desktop's (the stem model's)
@@ -217,9 +221,9 @@ export class Practice {
   async handle(action: string, options: Record<string, unknown> = {}): Promise<unknown> {
     switch (action) {
       case "open": {
-        const split = options.split !== false;
+        const mode: PrepareMode = options.split === false ? "voice" : this.host.splitEnabled === false ? "song" : "split";
         const file = await this.host.pickFile(AUDIO);
-        if (file) void this.prepare(file, split);
+        if (file) void this.prepare(file, mode);
         return { ok: true };
       }
       case "library":
@@ -405,7 +409,8 @@ export class Practice {
   }
 
   //==============================================================================
-  private async prepare(file: File, split: boolean) {
+  private async prepare(file: File, mode: PrepareMode) {
+    const split = mode === "split";
     if (this.job) this.job.cancelled = true;
     const job: Job = { phase: "reading", progress: 0, name: file.name.replace(/\.[^.]+$/, ""), cancelled: false };
     this.job = job;
@@ -417,7 +422,7 @@ export class Practice {
     report();
 
     try {
-      const folder = `${await fileId(file)}${split ? "" : "-voice"}`;
+      const folder = `${await fileId(file)}${mode === "split" ? "" : mode === "song" ? "-song" : "-voice"}`;
       const cached = await this.loadFolder(folder);
       if (job.cancelled) return fail("");
       if (cached) {
@@ -467,6 +472,14 @@ export class Practice {
         backingFile = this.host.encodeWav(parts.backing, RATE);
       }
 
+      if (mode === "song") {
+        // No stems: the song plays as the guide (at the guide's level) over a copy with its centred voice taken down.
+        const stereo: [Float32Array, Float32Array] = [decoded[0]!, decoded[1] ?? decoded[0]!];
+        const reduced = reduceVoice(stereo, RATE).audio;
+        keyAudio = mono(reduced);
+        backingFile = this.host.encodeWav(reduced, RATE);
+      }
+
       job.phase = "listening";
       job.progress = 0.5;
       report();
@@ -475,7 +488,7 @@ export class Practice {
       if (!melody.trim()) return fail(split ? "Couldn't find a sung melody in this song." : "Couldn't find a sung melody in this file.");
 
       const guideName = split ? GUIDE : file.name;
-      const info: Info = { name: job.name, key, seconds: round3(seconds), voiceOnly: !split, opened: this.now(), guide: guideName, backing: backingFile ? BACKING : "" };
+      const info: Info = { name: job.name, key, seconds: round3(seconds), voiceOnly: mode === "voice", opened: this.now(), guide: guideName, backing: backingFile ? BACKING : "" };
       await this.host.store.write(folder, guideName, guideFile);
       if (backingFile) await this.host.store.write(folder, BACKING, backingFile);
       await this.host.store.write(folder, MELODY, melody);

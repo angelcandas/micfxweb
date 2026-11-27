@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { singingWav } from "./singing";
+import { singingWav, stereoSongWav } from "./singing";
 
 // Practice on the web: a voice on its own is prepared (its melody found by analysis.wasm in
 // a worker), kept in the browser's private files, and opens again from the library.
@@ -51,4 +51,21 @@ test("a voice-only song is prepared, drawn, and opens again from the library", a
   await expect(page.locator(".practice-info")).toContainText("+2 st"); // still in the new key
   await page.getByRole("button", { name: "Library", exact: true }).click();
   await expect(page.locator(".practice-library")).toContainText("Scale study");
+});
+
+test("a whole song opens as it is, with its voice taken down (no stem split in the browser)", async ({ page }) => {
+  test.setTimeout(60_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.locator(".practice-toggle").click();
+  const choosing = page.waitForEvent("filechooser");
+  await page.locator(".practice-open").click();
+  await (await choosing).setFiles({ name: "Band take.wav", mimeType: "audio/wav", buffer: stereoSongWav(12) });
+  // Seconds, not minutes: no model, no split.
+  await expect(page.locator(".practice-song")).toHaveText("Band take", { timeout: 30_000 });
+  await expect(page.locator(".practice-message")).toContainText("Ready");
+  await expect(page.locator(".tracks-rows .track")).toHaveCount(2); // the song (as the guide) and its backing
+  expect(errors).toEqual([]);
 });

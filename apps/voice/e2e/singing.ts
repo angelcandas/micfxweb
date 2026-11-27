@@ -35,3 +35,23 @@ export function singingWav(seconds: number): Buffer {
   }
   return data;
 }
+
+/** A stereo "song": the sung voice in the middle and a pad off to the left, 16-bit at 44.1 kHz. */
+export function stereoSongWav(seconds: number): Buffer {
+  const mono = singingWav(seconds);
+  const frames = (mono.length - 44) / 2;
+  const data = Buffer.alloc(44 + frames * 4);
+  mono.copy(data, 0, 0, 44);
+  data.writeUInt16LE(2, 22); // channels
+  data.writeUInt32LE(RATE * 4, 28);
+  data.writeUInt16LE(4, 32);
+  data.writeUInt32LE(36 + frames * 4, 4);
+  data.writeUInt32LE(frames * 4, 40);
+  for (let i = 0; i < frames; ++i) {
+    const voice = mono.readInt16LE(44 + i * 2) / 32767;
+    const pad = 0.12 * Math.sin((2 * Math.PI * 165 * i) / RATE) + 0.08 * Math.sin((2 * Math.PI * 247 * i) / RATE);
+    data.writeInt16LE(Math.round(Math.max(-1, Math.min(1, voice + pad)) * 32767), 44 + i * 4);
+    data.writeInt16LE(Math.round(Math.max(-1, Math.min(1, voice - pad * 0.2)) * 32767), 46 + i * 4);
+  }
+  return data;
+}

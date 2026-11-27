@@ -37,6 +37,7 @@ test("a whole song is split into its voice and backing, then practised", async (
   const log: string[] = [];
   page.on("console", (m) => log.push(m.type() + ": " + m.text().slice(0, 300)));
   page.on("pageerror", (e) => log.push("pageerror: " + e.message.slice(0, 300)));
+  await page.addInitScript(() => localStorage.setItem("micfx.stemSplit", "1")); // (off by default in the browser)
   await page.goto("/");
   await keepModel(page, model!);
   await page.getByRole("button", { name: "Done" }).click();
