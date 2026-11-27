@@ -5,15 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="MicFX Voice: live voice effects for your microphone, in the browser.">
   <title>MicFX Voice</title>
-  <script>
-    // A phone opens on Capture; "?live" (or a shared-sound link) opens the effects screen.
-    (function () {
-      try {
-        if (location.hash || /[?&](live|desktop)\b/.test(location.search)) return;
-        if (matchMedia("(max-width: 760px) and (pointer: coarse)").matches) location.replace("capture.html");
-      } catch (e) {}
-    })();
-  </script>
   <meta name="theme-color" content="#0b0d12">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
