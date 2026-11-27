@@ -80,7 +80,7 @@ interface Info {
 }
 
 type Phase = "reading" | "downloading" | "loading" | "splitting" | "listening";
-const AUDIO = "audio/*,.wav,.aif,.aiff,.flac,.ogg,.mp3,.m4a";
+const AUDIO = "audio/*,video/mp4,video/quicktime,video/webm,.wav,.aif,.aiff,.flac,.ogg,.opus,.mp3,.m4a,.aac,.mp4,.m4v,.mov,.webm";
 const RATE = 44100; // the desktop's (the stem model's)
 const MELODY = "melody.txt";
 const GUIDE = "guide.wav";

@@ -5,6 +5,7 @@ import { uniqueNames } from "../src/handoff";
 describe("drag and drop", () => {
   it("knows what a file is by its name, or its type", () => {
     expect(dropKind({ name: "Song.MP3", type: "" })).toBe("audio");
+    expect(dropKind({ name: "Gig.MP4", type: "video/mp4" })).toBe("audio");
     expect(dropKind({ name: "voice", type: "audio/webm" })).toBe("audio");
     expect(dropKind({ name: "Friday.micfxset", type: "application/xml" })).toBe("setlist");
     expect(dropKind({ name: "MicFX Voice backup.micfxbackup", type: "" })).toBe("backup");
